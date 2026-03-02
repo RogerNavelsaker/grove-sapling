@@ -25,8 +25,8 @@
 	},
 	"scripts": {
 		"test": "bun test",
-		"lint": "biome check src/",
-		"lint:fix": "biome check --write src/",
+		"lint": "biome check .",
+		"lint:fix": "biome check --write .",
 		"typecheck": "tsc --noEmit",
 		"version:bump": "bun scripts/version-bump.ts"
 	},

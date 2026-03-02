@@ -1,8 +1,3 @@
-/**
- * Custom error types for Sapling.
- * All error types extend SaplingError base class.
- */
-
 export class SaplingError extends Error {
 	readonly code: string;
 
