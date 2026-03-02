@@ -1,3 +1,8 @@
+/**
+ * Custom error types for Sapling.
+ * All error types extend SaplingError base class.
+ */
+
 export class SaplingError extends Error {
 	readonly code: string;
 
@@ -12,5 +17,26 @@ export class ClientError extends SaplingError {
 	constructor(message: string, code: string, options?: ErrorOptions) {
 		super(message, code, options);
 		this.name = "ClientError";
+	}
+}
+
+export class ToolError extends SaplingError {
+	constructor(message: string, code: string, options?: ErrorOptions) {
+		super(message, code, options);
+		this.name = "ToolError";
+	}
+}
+
+export class ContextError extends SaplingError {
+	constructor(message: string, code: string, options?: ErrorOptions) {
+		super(message, code, options);
+		this.name = "ContextError";
+	}
+}
+
+export class ConfigError extends SaplingError {
+	constructor(message: string, code: string, options?: ErrorOptions) {
+		super(message, code, options);
+		this.name = "ConfigError";
 	}
 }
