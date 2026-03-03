@@ -58,6 +58,7 @@ program
 	.option("--json", "NDJSON event output on stdout")
 	.option("--timing", "Output elapsed execution time to stderr") // sapling-bcb3
 	.option("-q, --quiet", "Suppress non-essential output")
+	.option("--guards-file <path>", "Path to guards config JSON file")
 	.action(
 		async (prompt: string | undefined, options: Record<string, string | boolean | undefined>) => {
 			try {
@@ -83,6 +84,7 @@ program
 					verbose: options.verbose as boolean | undefined,
 					quiet: options.quiet as boolean | undefined,
 					json: options.json as boolean | undefined,
+					guardsFile: options.guardsFile as string | undefined,
 				};
 
 				const config = loadConfig({
@@ -92,6 +94,7 @@ program
 					...(opts.verbose !== undefined ? { verbose: opts.verbose } : {}),
 					...(opts.quiet !== undefined ? { quiet: opts.quiet } : {}),
 					...(opts.json !== undefined ? { json: opts.json } : {}),
+					...(opts.guardsFile !== undefined ? { guardsFile: opts.guardsFile } : {}),
 					cwd: (options.cwd as string | undefined) ?? process.cwd(),
 				});
 

@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { DEFAULT_CONFIG, loadConfig, validateConfig } from "./config.ts";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DEFAULT_CONFIG, loadConfig, loadGuardConfig, validateConfig } from "./config.ts";
 import { ConfigError } from "./errors.ts";
 
 describe("validateConfig", () => {
@@ -109,6 +112,51 @@ describe("loadConfig", () => {
 	it("leaves apiBaseUrl undefined when ANTHROPIC_BASE_URL is not set", () => {
 		const config = loadConfig();
 		expect(config.apiBaseUrl).toBeUndefined();
+	});
+});
+
+describe("loadGuardConfig", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = join(tmpdir(), `sapling-guards-test-${Date.now()}`);
+		mkdirSync(tmpDir, { recursive: true });
+	});
+
+	it("returns null when file does not exist (standalone mode)", async () => {
+		const result = await loadGuardConfig(join(tmpDir, "nonexistent.json"));
+		expect(result).toBeNull();
+	});
+
+	it("parses valid guard config", async () => {
+		const filePath = join(tmpDir, "guards.json");
+		writeFileSync(
+			filePath,
+			JSON.stringify({ version: "1", rules: [{ event: "pre_tool_call", action: "allow" }] }),
+		);
+		const result = await loadGuardConfig(filePath);
+		expect(result).not.toBeNull();
+		expect(result?.rules).toHaveLength(1);
+		const firstRule = result?.rules[0];
+		expect(firstRule?.action).toBe("allow");
+	});
+
+	it("throws ConfigError for invalid JSON", async () => {
+		const filePath = join(tmpDir, "bad.json");
+		writeFileSync(filePath, "not json {{{");
+		await expect(loadGuardConfig(filePath)).rejects.toThrow(ConfigError);
+	});
+
+	it("throws ConfigError when rules field is missing", async () => {
+		const filePath = join(tmpDir, "no-rules.json");
+		writeFileSync(filePath, JSON.stringify({ version: "1" }));
+		await expect(loadGuardConfig(filePath)).rejects.toThrow(ConfigError);
+	});
+
+	it("throws ConfigError when rules is not an array", async () => {
+		const filePath = join(tmpDir, "bad-rules.json");
+		writeFileSync(filePath, JSON.stringify({ rules: "not-an-array" }));
+		await expect(loadGuardConfig(filePath)).rejects.toThrow(ConfigError);
 	});
 });
 

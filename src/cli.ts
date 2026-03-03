@@ -9,8 +9,10 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { AnthropicClient, CcClient, PiClient } from "./client/index.ts";
+import { loadGuardConfig } from "./config.ts";
 import { createContextManager } from "./context/manager.ts";
 import { ConfigError } from "./errors.ts";
+import { HookManager } from "./hooks/manager.ts";
 import { runLoop } from "./loop.ts";
 import { createDefaultRegistry } from "./tools/index.ts";
 import type { LlmClient, LoopOptions, RunOptions, SaplingConfig } from "./types.ts";
@@ -77,6 +79,15 @@ export async function runCommand(
 		}
 	}
 
+	// Load guard config if guards file provided (standalone mode if file not found)
+	let hookManager: HookManager | null = null;
+	if (config.guardsFile) {
+		const guardConfig = await loadGuardConfig(config.guardsFile);
+		if (guardConfig) {
+			hookManager = new HookManager(guardConfig);
+		}
+	}
+
 	const client = createClient(config);
 	const tools = createDefaultRegistry();
 	const contextManager = createContextManager({
@@ -90,6 +101,7 @@ export async function runCommand(
 		model: config.model,
 		maxTurns: config.maxTurns,
 		cwd: config.cwd,
+		hookManager: hookManager ?? undefined,
 	};
 
 	return runLoop(client, tools, contextManager, loopOptions);

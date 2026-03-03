@@ -72,6 +72,8 @@ export interface LoopOptions {
 	model: string;
 	maxTurns?: number;
 	cwd: string;
+	/** Optional hook manager for pre/post tool call guards. Wired in sapling-8350. */
+	hookManager?: unknown;
 }
 
 export interface LoopResult {
@@ -109,6 +111,7 @@ export interface SaplingConfig {
 	contextWindow: number;
 	contextBudget: ContextBudget;
 	apiBaseUrl?: string;
+	guardsFile?: string;
 }
 
 export interface RunOptions {
@@ -119,6 +122,7 @@ export interface RunOptions {
 	verbose?: boolean;
 	quiet?: boolean;
 	json?: boolean;
+	guardsFile?: string;
 }
 
 // ─── Context Types ────────────────────────────────────────────────────────────
@@ -176,6 +180,23 @@ export interface ToolRegistry {
 	get(name: string): Tool | undefined;
 	list(): Tool[];
 	toDefinitions(): ToolDefinition[];
+}
+
+// ─── Guards Types ─────────────────────────────────────────────────────────────
+
+export type GuardEvent = "pre_tool_call" | "post_tool_call";
+export type GuardAction = "block" | "allow" | "warn";
+
+export interface GuardRule {
+	event: GuardEvent;
+	tool?: string;
+	action: GuardAction;
+	reason?: string;
+}
+
+export interface GuardConfig {
+	version?: string;
+	rules: GuardRule[];
 }
 
 // ─── Scoring Types ────────────────────────────────────────────────────────────

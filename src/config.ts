@@ -2,8 +2,11 @@
  * Configuration loader, defaults, and validation for Sapling.
  */
 
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { ConfigError } from "./errors.ts";
-import type { ContextBudget, LlmBackend, SaplingConfig } from "./types.ts";
+import type { ContextBudget, GuardConfig, LlmBackend, SaplingConfig } from "./types.ts";
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 
@@ -69,6 +72,42 @@ export function validateConfig(config: Partial<SaplingConfig>): SaplingConfig {
 	}
 
 	return merged;
+}
+
+/**
+ * Load guard config from a JSON file.
+ * Returns null if file does not exist (standalone mode — no error).
+ * Throws ConfigError if file exists but is invalid JSON or missing required fields.
+ */
+export async function loadGuardConfig(filePath: string): Promise<GuardConfig | null> {
+	const resolved = resolve(filePath);
+	if (!existsSync(resolved)) {
+		return null;
+	}
+	let raw: string;
+	try {
+		raw = await readFile(resolved, "utf-8");
+	} catch (_err) {
+		throw new ConfigError(`Failed to read guards file: ${resolved}`, "CONFIG_FILE_NOT_FOUND");
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		throw new ConfigError(`Guards file is not valid JSON: ${resolved}`, "CONFIG_INVALID_GUARDS");
+	}
+	if (
+		typeof parsed !== "object" ||
+		parsed === null ||
+		!("rules" in parsed) ||
+		!Array.isArray((parsed as Record<string, unknown>).rules)
+	) {
+		throw new ConfigError(
+			`Guards file must have a "rules" array: ${resolved}`,
+			"CONFIG_INVALID_GUARDS",
+		);
+	}
+	return parsed as GuardConfig;
 }
 
 /**
