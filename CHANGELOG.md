@@ -41,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sapling tool definitions are now injected into the CC system prompt so the model knows its available tools
 
 ### Changed
-- Test suite grown from 164 tests / 17 files / 377 expects to 279 tests / 19 files / 921 expects
+- Test suite grown from 164 tests / 17 files / 377 expects to 298 tests / 24 files / 959 expects
 
 ## [0.1.0] - 2026-03-02
 
