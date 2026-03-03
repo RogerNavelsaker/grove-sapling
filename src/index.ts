@@ -6,7 +6,7 @@ import { registerDoctorCommand } from "./commands/doctor.ts";
 import { registerTypoHandler } from "./commands/typo.ts";
 import { registerUpgradeCommand } from "./commands/upgrade.ts";
 import { loadConfig } from "./config.ts";
-import { printJson, printJsonError } from "./json.ts";
+import { jsonOutput, printJson, printJsonError } from "./json.ts";
 import { colors, setColorEnabled } from "./logging/color.ts";
 import { configure, logger } from "./logging/logger.ts";
 import type { LlmBackend, RunOptions } from "./types.ts";
@@ -21,7 +21,7 @@ if (
 	process.argv.includes("--json")
 ) {
 	console.log(
-		JSON.stringify({
+		jsonOutput("version", {
 			name: "@os-eco/sapling-cli",
 			version: VERSION,
 			runtime: "bun",
@@ -117,8 +117,18 @@ program
 program
 	.command("version")
 	.description("Print version")
-	.action(() => {
-		console.log(VERSION);
+	.option("--json", "Output as JSON envelope")
+	.action((opts: { json?: boolean }) => {
+		if (opts.json) {
+			printJson("version", {
+				name: "@os-eco/sapling-cli",
+				version: VERSION,
+				runtime: "bun",
+				platform: `${process.platform}-${process.arch}`,
+			});
+		} else {
+			console.log(VERSION);
+		}
 	});
 
 program.showSuggestionAfterError(false);
