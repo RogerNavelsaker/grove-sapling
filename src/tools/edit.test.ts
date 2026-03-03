@@ -83,6 +83,16 @@ describe("EditTool", () => {
 		expect(content).not.toContain("beta");
 	});
 
+	it("resolves relative file_path against cwd", async () => {
+		await Bun.write(join(testDir, "rel.ts"), "const x = 1;");
+		const result = await tool.execute(
+			{ file_path: "rel.ts", old_string: "const x = 1;", new_string: "const x = 2;" },
+			testDir,
+		);
+		expect(result.isError).toBeFalsy();
+		expect(await Bun.file(join(testDir, "rel.ts")).text()).toBe("const x = 2;");
+	});
+
 	it("toDefinition returns correct structure", () => {
 		const def = tool.toDefinition();
 		expect(def.name).toBe("edit");

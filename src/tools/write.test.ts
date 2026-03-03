@@ -49,6 +49,12 @@ describe("WriteTool", () => {
 		expect(result.metadata?.filePath).toBe(p);
 	});
 
+	it("resolves relative file_path against cwd", async () => {
+		const result = await tool.execute({ file_path: "relative.txt", content: "relative" }, testDir);
+		expect(result.isError).toBeFalsy();
+		expect(await Bun.file(join(testDir, "relative.txt")).text()).toBe("relative");
+	});
+
 	it("throws on missing file_path", async () => {
 		expect(tool.execute({ file_path: "", content: "x" }, testDir)).rejects.toThrow();
 	});

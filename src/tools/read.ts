@@ -1,3 +1,4 @@
+import { isAbsolute, resolve } from "node:path";
 import { ToolError } from "../errors.ts";
 import type { Tool, ToolResult } from "./types.ts";
 
@@ -14,7 +15,7 @@ export class ReadTool implements Tool {
 		properties: {
 			file_path: {
 				type: "string",
-				description: "Absolute path to the file to read",
+				description: "Path to the file to read (absolute or relative to cwd)",
 			},
 			offset: {
 				type: "number",
@@ -28,11 +29,13 @@ export class ReadTool implements Tool {
 		required: ["file_path"],
 	};
 
-	async execute(input: Record<string, unknown>, _cwd: string): Promise<ToolResult> {
+	async execute(input: Record<string, unknown>, cwd: string): Promise<ToolResult> {
 		const filePath = input.file_path;
 		if (typeof filePath !== "string" || filePath.trim() === "") {
 			throw new ToolError("file_path must be a non-empty string", "INVALID_INPUT");
 		}
+
+		const resolved = isAbsolute(filePath) ? filePath : resolve(cwd, filePath);
 
 		const offset = typeof input.offset === "number" ? Math.max(1, input.offset) : 1;
 		const limit =
@@ -40,11 +43,11 @@ export class ReadTool implements Tool {
 				? Math.min(input.limit, DEFAULT_LINE_LIMIT)
 				: DEFAULT_LINE_LIMIT;
 
-		const file = Bun.file(filePath);
+		const file = Bun.file(resolved);
 		const exists = await file.exists();
 		if (!exists) {
 			return {
-				content: `File not found: ${filePath}`,
+				content: `File not found: ${resolved}`,
 				isError: true,
 			};
 		}
@@ -76,7 +79,7 @@ export class ReadTool implements Tool {
 			content,
 			metadata: {
 				tokensEstimate: Math.ceil(content.length / 4),
-				filePath,
+				filePath: resolved,
 				truncated,
 			},
 		};

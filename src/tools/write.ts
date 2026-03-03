@@ -1,5 +1,5 @@
 import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { ToolError } from "../errors.ts";
 import type { Tool, ToolResult } from "./types.ts";
 
@@ -14,7 +14,7 @@ export class WriteTool implements Tool {
 		properties: {
 			file_path: {
 				type: "string",
-				description: "Absolute path to the file to write",
+				description: "Path to the file to write (absolute or relative to cwd)",
 			},
 			content: {
 				type: "string",
@@ -24,7 +24,7 @@ export class WriteTool implements Tool {
 		required: ["file_path", "content"],
 	};
 
-	async execute(input: Record<string, unknown>, _cwd: string): Promise<ToolResult> {
+	async execute(input: Record<string, unknown>, cwd: string): Promise<ToolResult> {
 		const filePath = input.file_path;
 		if (typeof filePath !== "string" || filePath.trim() === "") {
 			throw new ToolError("file_path must be a non-empty string", "INVALID_INPUT");
@@ -35,17 +35,18 @@ export class WriteTool implements Tool {
 			throw new ToolError("content must be a string", "INVALID_INPUT");
 		}
 
-		const dir = dirname(filePath);
+		const resolved = isAbsolute(filePath) ? filePath : resolve(cwd, filePath);
+		const dir = dirname(resolved);
 		await mkdir(dir, { recursive: true });
 
-		await Bun.write(filePath, content);
+		await Bun.write(resolved, content);
 
 		const byteSize = new TextEncoder().encode(content).length;
 
 		return {
-			content: `Written ${byteSize} bytes to ${filePath}`,
+			content: `Written ${byteSize} bytes to ${resolved}`,
 			metadata: {
-				filePath,
+				filePath: resolved,
 				tokensEstimate: Math.ceil(content.length / 4),
 			},
 		};

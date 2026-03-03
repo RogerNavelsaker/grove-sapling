@@ -65,6 +65,13 @@ describe("ReadTool", () => {
 		expect(result.metadata?.filePath).toBe(p);
 	});
 
+	it("resolves relative file_path against cwd", async () => {
+		await Bun.write(join(testDir, "rel.txt"), "relative content");
+		const result = await tool.execute({ file_path: "rel.txt" }, testDir);
+		expect(result.isError).toBeFalsy();
+		expect(result.content).toContain("relative content");
+	});
+
 	it("toDefinition returns correct structure", () => {
 		const def = tool.toDefinition();
 		expect(def.name).toBe("read");

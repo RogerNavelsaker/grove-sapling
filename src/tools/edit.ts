@@ -1,3 +1,4 @@
+import { isAbsolute, resolve } from "node:path";
 import { ToolError } from "../errors.ts";
 import type { Tool, ToolResult } from "./types.ts";
 
@@ -13,7 +14,7 @@ export class EditTool implements Tool {
 		properties: {
 			file_path: {
 				type: "string",
-				description: "Absolute path to the file to edit",
+				description: "Path to the file to edit (absolute or relative to cwd)",
 			},
 			old_string: {
 				type: "string",
@@ -27,7 +28,7 @@ export class EditTool implements Tool {
 		required: ["file_path", "old_string", "new_string"],
 	};
 
-	async execute(input: Record<string, unknown>, _cwd: string): Promise<ToolResult> {
+	async execute(input: Record<string, unknown>, cwd: string): Promise<ToolResult> {
 		const filePath = input.file_path;
 		if (typeof filePath !== "string" || filePath.trim() === "") {
 			throw new ToolError("file_path must be a non-empty string", "INVALID_INPUT");
@@ -43,11 +44,12 @@ export class EditTool implements Tool {
 			throw new ToolError("new_string must be a string", "INVALID_INPUT");
 		}
 
-		const file = Bun.file(filePath);
+		const resolved = isAbsolute(filePath) ? filePath : resolve(cwd, filePath);
+		const file = Bun.file(resolved);
 		const exists = await file.exists();
 		if (!exists) {
 			return {
-				content: `File not found: ${filePath}`,
+				content: `File not found: ${resolved}`,
 				isError: true,
 			};
 		}
@@ -57,7 +59,7 @@ export class EditTool implements Tool {
 		const firstIdx = original.indexOf(oldString);
 		if (firstIdx === -1) {
 			return {
-				content: `old_string not found in ${filePath}`,
+				content: `old_string not found in ${resolved}`,
 				isError: true,
 			};
 		}
@@ -65,14 +67,14 @@ export class EditTool implements Tool {
 		const secondIdx = original.indexOf(oldString, firstIdx + 1);
 		if (secondIdx !== -1) {
 			return {
-				content: `old_string appears more than once in ${filePath} — must be unique`,
+				content: `old_string appears more than once in ${resolved} — must be unique`,
 				isError: true,
 			};
 		}
 
 		const updated =
 			original.slice(0, firstIdx) + newString + original.slice(firstIdx + oldString.length);
-		await Bun.write(filePath, updated);
+		await Bun.write(resolved, updated);
 
 		// Determine the line range affected
 		const beforeEdit = original.slice(0, firstIdx);
@@ -80,9 +82,9 @@ export class EditTool implements Tool {
 		const endLine = startLine + newString.split("\n").length - 1;
 
 		return {
-			content: `Edited ${filePath}: lines ${startLine}-${endLine}`,
+			content: `Edited ${resolved}: lines ${startLine}-${endLine}`,
 			metadata: {
-				filePath,
+				filePath: resolved,
 				tokensEstimate: Math.ceil(newString.length / 4),
 			},
 		};
