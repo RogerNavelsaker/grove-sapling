@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "bun:test";
 import type { Message } from "../types.ts";
-import { extractFilePaths, scoreMessage, scoreMessages } from "./score.ts";
+import { categorizeMessage, extractFilePaths, scoreMessage, scoreMessages } from "./score.ts";
 
 describe("extractFilePaths", () => {
 	it("extracts absolute paths from text content", () => {
@@ -98,6 +98,33 @@ describe("scoreMessage", () => {
 	});
 });
 
+describe("categorizeMessage", () => {
+	const msg: Message = { role: "user", content: "test" };
+
+	it("marks index 0 as task when currentTurnStart < totalMessages (full array)", () => {
+		expect(categorizeMessage(msg, 0, 5, 3)).toBe("task");
+	});
+
+	it("marks messages before currentTurnStart as history", () => {
+		expect(categorizeMessage(msg, 1, 5, 3)).toBe("history");
+		expect(categorizeMessage(msg, 2, 5, 3)).toBe("history");
+	});
+
+	it("marks messages at or after currentTurnStart as current", () => {
+		expect(categorizeMessage(msg, 3, 5, 3)).toBe("current");
+		expect(categorizeMessage(msg, 4, 5, 3)).toBe("current");
+	});
+
+	it("marks index 0 as history when currentTurnStart === totalMessages (history slice)", () => {
+		// This is the key fix: when scoreMessages is called with a pre-sliced history
+		// array, passing currentTurnStart = totalMessages ensures index 0 is "history"
+		// not "task" (because currentTurnStart < totalMessages is false).
+		expect(categorizeMessage(msg, 0, 3, 3)).toBe("history");
+		expect(categorizeMessage(msg, 1, 3, 3)).toBe("history");
+		expect(categorizeMessage(msg, 2, 3, 3)).toBe("history");
+	});
+});
+
 describe("scoreMessages", () => {
 	it("scores a list of messages in order", () => {
 		const messages: Message[] = [
@@ -141,5 +168,20 @@ describe("scoreMessages", () => {
 		expect(scored[0]?.age).toBe(2);
 		expect(scored[1]?.age).toBe(1);
 		expect(scored[2]?.age).toBe(0);
+	});
+
+	it("categorizes all messages as history when currentTurnIdx equals array length", () => {
+		// Simulates manager.ts calling scoreMessages on a pre-sliced historyMessages array.
+		// Passing historyMessages.length as currentTurnIdx must yield category "history"
+		// for all messages — including index 0 — so score-based pruning can fire on them.
+		const messages: Message[] = [
+			{ role: "user", content: "first history message" },
+			{ role: "assistant", content: [{ type: "text", text: "second history message" }] },
+			{ role: "user", content: "third history message" },
+		];
+		const scored = scoreMessages(messages, [], messages.length);
+		for (const s of scored) {
+			expect(s.category).toBe("history");
+		}
 	});
 });

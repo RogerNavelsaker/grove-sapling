@@ -162,9 +162,11 @@ export function categorizeMessage(
 	totalMessages: number,
 	currentTurnStart: number,
 ): MessageCategory {
-	if (index === 0) return "task";
+	// Only treat index 0 as "task" when the array includes pre-current messages
+	// (i.e., currentTurnStart < totalMessages means this is the full message array
+	// with a real task message at index 0, not a pre-sliced history sub-array).
+	if (index === 0 && currentTurnStart < totalMessages) return "task";
 	if (index >= currentTurnStart) return "current";
-	if (index < totalMessages - currentTurnStart) return "history";
 	return "history";
 }
 

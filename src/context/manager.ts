@@ -126,7 +126,13 @@ export class SaplingContextManager implements ContextManager {
 		);
 
 		// 5. SCORE — rate each history message
-		const allHistoryScored = scoreMessages(historyMessages, this.currentFiles, 0);
+		// Pass historyMessages.length as currentTurnIdx so all messages are categorized as
+		// "history" (not "current" or "task") — historyMessages is already a pre-split slice.
+		const allHistoryScored = scoreMessages(
+			historyMessages,
+			this.currentFiles,
+			historyMessages.length,
+		);
 
 		// 6. PRUNE — apply pruning strategies
 		const budgets = computeBudgets(this.budget);

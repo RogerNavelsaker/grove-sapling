@@ -142,6 +142,31 @@ describe("SaplingContextManager", () => {
 		}
 	});
 
+	it("actually drops low-score old messages after many turns", () => {
+		// Regression test for the bug where scoreMessages was called with currentTurnIdx=0
+		// on historyMessages, causing all messages to be categorized as "task" or "current"
+		// and thus never pruned. With the fix, low-score old messages should be dropped.
+		const manager = new SaplingContextManager();
+		const taskMsg = makeUserMsg("Fix the bug");
+
+		// Build 20 turns of low-relevance history (no file overlap, no errors, no decisions)
+		const messages: Message[] = [taskMsg];
+		for (let i = 0; i < 20; i++) {
+			messages.push(makeAssistantMsg(`Working on turn ${i}`));
+			messages.push(makeUserMsg(`Result ${i}`));
+		}
+		// Add a current turn (assistant last)
+		messages.push(makeAssistantMsg("Current response"));
+
+		const result = manager.process([...messages], zeroUsage, []);
+
+		// With 20 turns of old low-relevance history, at least some messages should be pruned.
+		// The result must be shorter than the input (pruning fired).
+		expect(result.length).toBeLessThan(messages.length);
+		// Task message is always preserved as the first message.
+		expect(result[0]).toEqual(taskMsg);
+	});
+
 	it("never loses the task message", () => {
 		const manager = new SaplingContextManager();
 		const taskMsg = makeUserMsg("Important task: implement the feature");
