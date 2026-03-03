@@ -225,4 +225,56 @@ describe("pruneMessages", () => {
 		// Important message should survive
 		expect(result).toContain(important);
 	});
+
+	it("regression: current-turn message not miscategorised as history when earlier messages are dropped", () => {
+		// Regression for index misalignment: after a history message is dropped, kept[i] no
+		// longer corresponds to scoredMessages[i]. With the old code the current-turn message
+		// (at kept[1]) was matched against scoredMessages[1] (the dropped history entry) and
+		// therefore incorrectly included in historyMessages, making it eligible for budget
+		// eviction.
+		const task: Message = { role: "user", content: "task description" };
+		const droppedHist: Message = { role: "user", content: "old irrelevant history" };
+		const current: Message = { role: "user", content: "what should I do next?" };
+
+		const scored: ScoredMessage[] = [
+			makeScoredMessage(task, 1.0, 100, "task"),
+			makeScoredMessage(droppedHist, 0.05, 20, "history"), // score<0.15 & age>15 → dropped
+			makeScoredMessage(current, 1.0, 0, "current"),
+		];
+
+		// historyBudget=1 forces eviction of anything mistakenly categorised as history.
+		// With the bug, current ends up in historyMessages and gets evicted.
+		const result = pruneMessages(scored, new Set(), 2, 1);
+
+		expect(result).toContain(task);
+		expect(result).not.toContain(droppedHist);
+		// current must survive regardless of how tight the history budget is
+		expect(result).toContain(current);
+	});
+
+	it("regression: history messages after a dropped entry are correctly budget-enforced", () => {
+		// Regression: with the old index mapping, a history message that follows a dropped
+		// entry could escape budget enforcement because kept[i] pointed to the wrong
+		// scoredMessages entry and the category check returned false.
+		const task: Message = { role: "user", content: "task" };
+		const dropped: Message = { role: "user", content: "stale" };
+		// Make hist content large enough that it alone exceeds the tiny budget
+		const hist: Message = { role: "user", content: "h".repeat(500) }; // ~125 tokens
+		const current: Message = { role: "user", content: "current" };
+
+		const scored: ScoredMessage[] = [
+			makeScoredMessage(task, 1.0, 100, "task"),
+			makeScoredMessage(dropped, 0.05, 20, "history"), // dropped
+			makeScoredMessage(hist, 0.3, 10, "history"), // should be subject to budget
+			makeScoredMessage(current, 1.0, 0, "current"),
+		];
+
+		// budget=1 means hist cannot fit; it should be evicted by budget enforcement
+		const result = pruneMessages(scored, new Set(), 3, 1);
+
+		expect(result).toContain(task);
+		expect(result).not.toContain(dropped);
+		expect(result).not.toContain(hist); // evicted because it exceeds budget
+		expect(result).toContain(current);
+	});
 });

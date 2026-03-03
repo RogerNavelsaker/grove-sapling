@@ -289,14 +289,20 @@ export function pruneMessages(
 		pruneMessage(scored, modifiedFiles, currentTurnIdx),
 	);
 
-	// Filter out dropped messages
-	const kept = results.filter((r) => !r.wasDropped).map((r) => r.message);
+	// Pair each result with its original scored message before filtering, so that
+	// after removing dropped items the association between result.message and its
+	// category/score is not lost (kept[i] would otherwise no longer map to scoredMessages[i]).
+	const keptPairs = results
+		.map((r, i) => ({ result: r, scored: scoredMessages[i] as ScoredMessage }))
+		.filter(({ result }) => !result.wasDropped);
 
-	// If we're still over the history budget, drop lowest-scoring messages first
-	const historyMessages = kept.filter((_, i) => {
-		const scored = scoredMessages[i];
-		return scored && scored.category === "history";
-	});
+	const kept = keptPairs.map(({ result }) => result.message);
+
+	// If we're still over the history budget, drop lowest-scoring messages first.
+	// Use the paired scored entry (not array index) to identify history messages.
+	const historyMessages = keptPairs
+		.filter(({ scored }) => scored.category === "history")
+		.map(({ result }) => result.message);
 
 	const historyTokens = historyMessages.reduce((sum, m) => sum + estimateMessageTokens(m), 0);
 
@@ -304,10 +310,12 @@ export function pruneMessages(
 		return kept;
 	}
 
-	// Sort history messages by score (highest score = highest priority to keep)
+	// Sort history messages by score (highest score = highest priority to keep).
+	// Build the scoreMap from keptPairs so that modified/summarized messages are
+	// correctly mapped (result.message may differ from scored.message after pruning).
 	const scoreMap = new Map<Message, number>();
-	for (const scored of scoredMessages) {
-		scoreMap.set(scored.message, scored.score);
+	for (const { result, scored } of keptPairs) {
+		scoreMap.set(result.message, scored.score);
 	}
 
 	const historySet = new Set(historyMessages);
