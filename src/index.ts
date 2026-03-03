@@ -101,6 +101,9 @@ program
 				const result = await runCommand(prompt, opts, config);
 
 				if (config.json) {
+					if (result.responseText) {
+						printJson("response", { response: result.responseText });
+					}
 					if (result.exitReason === "error") {
 						printJsonError("run", result.error ?? "Task failed", {
 							exitReason: result.exitReason,
@@ -117,6 +120,9 @@ program
 						});
 					}
 				} else {
+					if (result.responseText) {
+						process.stdout.write(`${result.responseText}\n`);
+					}
 					logger.info(
 						`Done: ${result.exitReason} after ${result.totalTurns} turn(s) ` +
 							`(${result.totalInputTokens} in / ${result.totalOutputTokens} out tokens)`,
@@ -124,8 +130,10 @@ program
 				}
 
 				// --timing: print elapsed time to stderr in muted text (sapling-bcb3)
+				// TTY-safe: only apply colors.dim when stderr is a TTY (sapling-1975)
 				if (options.timing) {
-					process.stderr.write(colors.dim(`Done in ${Date.now() - startTime}ms\n`));
+					const elapsed = `Done in ${Date.now() - startTime}ms\n`;
+					process.stderr.write(process.stderr.isTTY ? colors.dim(elapsed) : elapsed);
 				}
 
 				// Use process.exitCode instead of process.exit(1) to allow cleanup/finally (sapling-43da)
