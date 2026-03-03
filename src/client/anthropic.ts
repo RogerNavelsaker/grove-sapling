@@ -45,6 +45,9 @@ export interface SdkClient {
 	};
 }
 
+// Matches client-side auth errors (e.g. missing ANTHROPIC_API_KEY) that have no HTTP status
+const AUTH_MESSAGE_RE = /api.?key|anthropic_api_key|authentication|unauthorized/i;
+
 function classifySdkError(err: unknown): { message: string; code: string } {
 	const message = err instanceof Error ? err.message : String(err);
 	const status =
@@ -64,6 +67,10 @@ function classifySdkError(err: unknown): { message: string; code: string } {
 			case 529:
 				return { message, code: "SDK_OVERLOADED" };
 		}
+	}
+	// Client-side auth errors (e.g. missing ANTHROPIC_API_KEY env var) have no HTTP status
+	if (AUTH_MESSAGE_RE.test(message)) {
+		return { message, code: "SDK_AUTH_FAILED" };
 	}
 	return { message, code: "SDK_API_ERROR" };
 }

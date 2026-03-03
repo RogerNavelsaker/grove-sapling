@@ -228,5 +228,34 @@ describe("AnthropicClient", () => {
 
 			await expect(client.call(baseRequest)).rejects.toMatchObject({ code: "SDK_API_ERROR" });
 		});
+
+		it("classifies missing ANTHROPIC_API_KEY error as SDK_AUTH_FAILED", async () => {
+			const diClient = makeDiClient(() =>
+				Promise.reject(
+					new Error(
+						"The ANTHROPIC_API_KEY environment variable is missing or empty; either provide it, or instantiate the Anthropic client with an apiKey option",
+					),
+				),
+			);
+			const client = new AnthropicClient({ _client: diClient });
+
+			await expect(client.call(baseRequest)).rejects.toMatchObject({ code: "SDK_AUTH_FAILED" });
+		});
+
+		it("classifies 'api key' message as SDK_AUTH_FAILED when no status", async () => {
+			const diClient = makeDiClient(() => Promise.reject(new Error("Invalid API key provided")));
+			const client = new AnthropicClient({ _client: diClient });
+
+			await expect(client.call(baseRequest)).rejects.toMatchObject({ code: "SDK_AUTH_FAILED" });
+		});
+
+		it("classifies 'authentication' message as SDK_AUTH_FAILED when no status", async () => {
+			const diClient = makeDiClient(() =>
+				Promise.reject(new Error("authentication failed: no credentials")),
+			);
+			const client = new AnthropicClient({ _client: diClient });
+
+			await expect(client.call(baseRequest)).rejects.toMatchObject({ code: "SDK_AUTH_FAILED" });
+		});
 	});
 });
