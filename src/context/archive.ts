@@ -9,7 +9,7 @@
  * - resolvedErrors: errors that were encountered and resolved
  */
 
-import type { ContentBlock, ContextArchive, Message } from "../types.ts";
+import type { ContentBlock, ContextArchive, Message, ToolResultBlock } from "../types.ts";
 import { estimateTokens } from "./measure.ts";
 
 /**
@@ -101,9 +101,24 @@ function summarizeToolCall(
 }
 
 /**
+ * Type guard for ToolResultBlock. User messages contain ToolResultBlock values
+ * at runtime (cast from LoopMessage in loop.ts), but the shared ContentBlock union
+ * type does not include tool_result to avoid burdening all ContentBlock consumers
+ * with exhaustive narrowing. We check via unknown to bypass the ContentBlock union.
+ */
+function isToolResultBlock(block: unknown): block is ToolResultBlock {
+	return (
+		typeof block === "object" &&
+		block !== null &&
+		(block as Record<string, unknown>).type === "tool_result" &&
+		typeof (block as Record<string, unknown>).tool_use_id === "string"
+	);
+}
+
+/**
  * Find the tool result content for a given tool_use ID.
  * Tool results come back as user messages with content blocks that have
- * type "tool_result" (in Anthropic API format) or we look for adjacent user messages.
+ * type "tool_result" and a matching tool_use_id field.
  */
 function findToolResult(toolUseId: string, messages: Message[]): string | null {
 	for (const msg of messages) {
@@ -111,21 +126,10 @@ function findToolResult(toolUseId: string, messages: Message[]): string | null {
 		if (typeof msg.content === "string") continue;
 
 		for (const block of msg.content) {
-			// Anthropic tool_result blocks have type "tool_result"
-			// We store them as user messages with content
-			if (
-				"type" in block &&
-				block.type === "tool_use" &&
-				"id" in block &&
-				(block as { id: string }).id === toolUseId
-			) {
-				return null; // This is the call, not the result
+			const rawBlock: unknown = block;
+			if (isToolResultBlock(rawBlock) && rawBlock.tool_use_id === toolUseId) {
+				return rawBlock.content;
 			}
-		}
-
-		// Fall back: if there's plain text content in user message, it might be the result
-		for (const block of msg.content) {
-			if (block.type === "text") return block.text;
 		}
 	}
 	return null;
