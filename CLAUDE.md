@@ -42,7 +42,7 @@ Two backends implementing `LlmClient` from `src/types.ts`:
 
 Runs every turn via `SaplingContextManager.process()`:
 1. **Measure** (`measure.ts`) — token budget tracking (4 chars/token heuristic, window split: 15% system, 10% archive, 40% history, 15% current, 20% headroom)
-2. **Score** (`score.ts`) — relevance score 0–1 per message (recency 0.30, file overlap 0.25, error context 0.20, decision content 0.15, size penalty 0.10)
+2. **Score** (`score.ts`) — relevance score 0–1 per message (recency 0.30, file overlap 0.25, error context 0.20, decision content 0.12, unresolved question 0.08, size penalty 0.05)
 3. **Prune** (`prune.ts`) — truncate large bash output, replace stale file reads, summarize/drop low-score old messages
 4. **Archive** (`archive.ts`) — dropped messages become a rolling work summary (template-based, no LLM call)
 5. **Reshape** (`reshape.ts`) — rebuild: [task] → [archive] → [pruned history] → [current turn]
