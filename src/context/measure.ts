@@ -5,7 +5,13 @@
  * Actual counts come from the LLM response usage field.
  */
 
-import type { BudgetUtilization, ContentBlock, ContextBudget, Message } from "../types.ts";
+import type {
+	BudgetUtilization,
+	ContentBlock,
+	ContextBudget,
+	Message,
+	ToolResultBlock,
+} from "../types.ts";
 
 /** Default context budget allocations for a 200K token window. */
 export const DEFAULT_BUDGET: ContextBudget = {
@@ -27,11 +33,15 @@ export function estimateTokens(text: string): number {
 }
 
 /**
- * Estimate token count for a ContentBlock.
+ * Estimate token count for a ContentBlock or ToolResultBlock.
  */
-export function estimateBlockTokens(block: ContentBlock): number {
+export function estimateBlockTokens(block: ContentBlock | ToolResultBlock): number {
 	if (block.type === "text") {
 		return estimateTokens(block.text);
+	}
+	if (block.type === "tool_result") {
+		// tool_result: tool_use_id + content string
+		return estimateTokens(block.tool_use_id) + estimateTokens(block.content);
 	}
 	// tool_use: name + JSON-serialized input
 	return estimateTokens(block.name) + estimateTokens(JSON.stringify(block.input));
@@ -46,7 +56,13 @@ export function estimateMessageTokens(message: Message): number {
 	if (typeof message.content === "string") {
 		return roleOverhead + estimateTokens(message.content);
 	}
-	return roleOverhead + message.content.reduce((sum, block) => sum + estimateBlockTokens(block), 0);
+	return (
+		roleOverhead +
+		message.content.reduce(
+			(sum, block) => sum + estimateBlockTokens(block as ContentBlock | ToolResultBlock),
+			0,
+		)
+	);
 }
 
 /**

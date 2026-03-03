@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type { ContentBlock, ContextBudget, Message } from "../types.ts";
+import type { ContentBlock, ContextBudget, Message, ToolResultBlock } from "../types.ts";
 import {
 	computeBudgets,
 	DEFAULT_BUDGET,
@@ -43,6 +43,27 @@ describe("estimateBlockTokens", () => {
 			estimateTokens("read") + estimateTokens(JSON.stringify({ file_path: "/src/foo.ts" }));
 		expect(estimateBlockTokens(block)).toBe(expected);
 	});
+
+	it("estimates tool_result block tokens from tool_use_id and content", () => {
+		const block: ToolResultBlock = {
+			type: "tool_result",
+			tool_use_id: "t1",
+			content: "file contents here",
+		};
+		const expected = estimateTokens("t1") + estimateTokens("file contents here");
+		expect(estimateBlockTokens(block)).toBe(expected);
+	});
+
+	it("does not crash on tool_result block (regression test for sapling-2692)", () => {
+		const block: ToolResultBlock = {
+			type: "tool_result",
+			tool_use_id: "call_abc123",
+			content: "x".repeat(200),
+			is_error: false,
+		};
+		expect(() => estimateBlockTokens(block)).not.toThrow();
+		expect(estimateBlockTokens(block)).toBeGreaterThan(0);
+	});
 });
 
 describe("estimateMessageTokens", () => {
@@ -57,6 +78,21 @@ describe("estimateMessageTokens", () => {
 			content: [{ type: "text", text: "Test output" }],
 		};
 		expect(estimateMessageTokens(msg)).toBe(4 + estimateTokens("Test output"));
+	});
+
+	it("handles user messages with tool_result blocks without crashing", () => {
+		// At runtime, user messages can contain ToolResultBlock arrays
+		const toolResultBlock: ToolResultBlock = {
+			type: "tool_result",
+			tool_use_id: "t1",
+			content: "bash output here",
+		};
+		const msg = {
+			role: "user" as const,
+			content: [toolResultBlock] as unknown as import("../types.ts").ContentBlock[],
+		};
+		expect(() => estimateMessageTokens(msg)).not.toThrow();
+		expect(estimateMessageTokens(msg)).toBeGreaterThan(0);
 	});
 });
 
