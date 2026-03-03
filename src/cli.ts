@@ -8,7 +8,7 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { AnthropicClient, CcClient } from "./client/index.ts";
+import { AnthropicClient, CcClient, PiClient } from "./client/index.ts";
 import { createContextManager } from "./context/manager.ts";
 import { ConfigError } from "./errors.ts";
 import { runLoop } from "./loop.ts";
@@ -28,6 +28,9 @@ explore relevant code, make changes, verify results. When done, say what you acc
 function createClient(config: SaplingConfig): LlmClient {
 	if (config.backend === "sdk") {
 		return new AnthropicClient({ model: config.model });
+	}
+	if (config.backend === "pi") {
+		return new PiClient({ model: config.model, cwd: config.cwd });
 	}
 	return new CcClient({ model: config.model, cwd: config.cwd });
 }

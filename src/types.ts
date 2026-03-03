@@ -85,7 +85,7 @@ export interface LoopResult {
 
 // ─── Config Types ─────────────────────────────────────────────────────────────
 
-export type LlmBackend = "cc" | "sdk";
+export type LlmBackend = "cc" | "pi" | "sdk";
 
 export interface ContextBudget {
 	windowSize: number;

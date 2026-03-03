@@ -48,7 +48,10 @@ program
 	.description("Execute a task")
 	.option("--model <name>", "Model to use (default: claude-sonnet-4-6)")
 	.option("--cwd <path>", "Working directory", ".")
-	.option("--backend <cc|sdk>", "LLM backend (auto-detects sdk inside CC sessions) (default: cc)")
+	.option(
+		"--backend <cc|pi|sdk>",
+		"LLM backend (auto-detects sdk inside CC sessions) (default: cc)",
+	)
 	.option("--system-prompt-file <path>", "Custom system prompt file")
 	.option("--max-turns <n>", "Max turns (default: 200)")
 	.option("--verbose", "Log context manager decisions")

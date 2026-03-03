@@ -62,6 +62,7 @@ const UNRECOVERABLE_CODES = new Set([
 	"SDK_PERMISSION_DENIED",
 	"SDK_MODEL_NOT_FOUND",
 	"SDK_NOT_INSTALLED",
+	"PI_NOT_FOUND",
 ]);
 
 // ─── Internal Helpers ─────────────────────────────────────────────────────────

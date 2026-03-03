@@ -30,7 +30,7 @@ export const DEFAULT_CONFIG: SaplingConfig = {
 	contextBudget: DEFAULT_BUDGET,
 };
 
-const VALID_BACKENDS: LlmBackend[] = ["cc", "sdk"];
+const VALID_BACKENDS: LlmBackend[] = ["cc", "pi", "sdk"];
 
 export function validateConfig(config: Partial<SaplingConfig>): SaplingConfig {
 	const merged: SaplingConfig = { ...DEFAULT_CONFIG, ...config };
