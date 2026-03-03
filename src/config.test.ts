@@ -20,6 +20,14 @@ describe("validateConfig", () => {
 		expect(() => validateConfig({ maxTurns: 0 })).toThrow(ConfigError);
 	});
 
+	it("throws ConfigError for maxTurns NaN", () => {
+		expect(() => validateConfig({ maxTurns: NaN })).toThrow(ConfigError);
+	});
+
+	it("throws ConfigError for maxTurns Infinity", () => {
+		expect(() => validateConfig({ maxTurns: Infinity })).toThrow(ConfigError);
+	});
+
 	it("throws ConfigError for invalid backend", () => {
 		expect(() => validateConfig({ backend: "invalid" as "cc" })).toThrow(ConfigError);
 	});

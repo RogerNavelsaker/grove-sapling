@@ -35,7 +35,7 @@ const VALID_BACKENDS: LlmBackend[] = ["cc", "sdk"];
 export function validateConfig(config: Partial<SaplingConfig>): SaplingConfig {
 	const merged: SaplingConfig = { ...DEFAULT_CONFIG, ...config };
 
-	if (merged.maxTurns < 1) {
+	if (Number.isNaN(merged.maxTurns) || !Number.isFinite(merged.maxTurns) || merged.maxTurns < 1) {
 		throw new ConfigError(
 			`maxTurns must be >= 1, got ${merged.maxTurns}`,
 			"CONFIG_INVALID_MAX_TURNS",
