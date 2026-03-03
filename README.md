@@ -89,6 +89,7 @@ sapling/
     config.ts             Config loader + env var support + validation
     json.ts               JSON parsing utilities
     test-helpers.ts       Shared test utilities (temp dirs, mock factories)
+    integration.test.ts   End-to-end tests (real API, gated behind SAPLING_INTEGRATION_TESTS=1)
     commands/
       completions.ts      Shell completion script generator (bash, zsh, fish)
       upgrade.ts          Self-upgrade from npm
@@ -98,7 +99,7 @@ sapling/
     client/
       cc.ts               Claude Code subprocess backend
       pi.ts               Pi multi-provider subprocess backend
-      anthropic.ts        Anthropic SDK backend (optional dep, dynamic import)
+      anthropic.ts        Anthropic SDK backend (optional dep, dynamic import, ANTHROPIC_BASE_URL support)
       index.ts            Client factory
     tools/
       bash.ts             Shell command execution
@@ -155,6 +156,7 @@ Sapling is part of the [os-eco](https://github.com/jayminwest/os-eco) AI agent t
 | `SAPLING_BACKEND` | `cc` | LLM backend (`cc`, `pi`, or `sdk`) |
 | `SAPLING_MAX_TURNS` | `200` | Maximum agent turns |
 | `SAPLING_CONTEXT_WINDOW` | `200000` | Context window size in tokens |
+| `ANTHROPIC_BASE_URL` | — | Custom API base URL for compatible providers |
 
 ## Development
 
@@ -162,7 +164,7 @@ Sapling is part of the [os-eco](https://github.com/jayminwest/os-eco) AI agent t
 git clone https://github.com/jayminwest/sapling.git
 cd sapling
 bun install
-bun test                  # 354 tests across 26 files (1076 expect() calls)
+bun test                  # 358 tests across 27 files (1081 expect() calls)
 bun run lint              # Biome linting
 bun run typecheck         # TypeScript strict check
 ```

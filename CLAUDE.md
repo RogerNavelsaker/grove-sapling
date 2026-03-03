@@ -11,7 +11,7 @@ Sapling (`@os-eco/sapling-cli`, CLI: `sp` / `sapling`) is a headless coding agen
 All commands use **Bun** as the runtime. There is no build/compile step — TypeScript runs directly.
 
 ```bash
-bun test                  # Run all 354 tests (26 files, 1076 expect() calls)
+bun test                  # Run all 358 tests (27 files, 1081 expect() calls)
 bun test src/loop.test.ts # Run a single test file
 bun run lint              # Lint (Biome)
 bun run lint:fix          # Lint + auto-fix
@@ -37,7 +37,7 @@ Each turn: call LLM → if no tool calls, stop → execute all tool calls in par
 Three backends implementing `LlmClient` from `src/types.ts`:
 - **CcClient** (`cc.ts`, default) — spawns `claude` subprocess with `--output-format json` and `--json-schema`, parses structured JSON response
 - **PiClient** (`pi.ts`) — spawns `pi` subprocess, communicates via JSONL events; supports multi-provider models
-- **AnthropicClient** (`anthropic.ts`) — calls Anthropic SDK directly; `@anthropic-ai/sdk` is an optional dep, dynamically imported
+- **AnthropicClient** (`anthropic.ts`) — calls Anthropic SDK directly; `@anthropic-ai/sdk` is an optional dep, dynamically imported; supports `ANTHROPIC_BASE_URL` for compatible providers
 
 ### Context pipeline (`src/context/`)
 
@@ -81,7 +81,7 @@ Three system prompt files emitted by Canopy: **builder** (writes code), **review
 - **Tabs for indentation**, 100-char line width (Biome).
 - **Tests are colocated** — `src/foo.test.ts` next to `src/foo.ts`. Tests use real temp directories (helpers in `src/test-helpers.ts`).
 - **Error hierarchy** in `src/errors.ts`: `SaplingError` base → `ClientError`, `ToolError`, `ContextError`, `ConfigError`.
-- **Config** (`src/config.ts`) supports env vars: `SAPLING_MODEL`, `SAPLING_BACKEND`, `SAPLING_MAX_TURNS`, `SAPLING_CONTEXT_WINDOW`.
+- **Config** (`src/config.ts`) supports env vars: `SAPLING_MODEL`, `SAPLING_BACKEND`, `SAPLING_MAX_TURNS`, `SAPLING_CONTEXT_WINDOW`, `ANTHROPIC_BASE_URL`.
 - **Agent prompt files in `agents/`** are emitted by Canopy — do not manually edit them. Use `cn update <name>` then `cn emit`.
 - **JSONL data files** (`.mulch/`, `.seeds/`, `.canopy/`) use `merge=union` git strategy (see `.gitattributes`).
 

@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-03-03
+
+### Added
+
+#### ANTHROPIC_BASE_URL Support
+- New `ANTHROPIC_BASE_URL` env var to configure compatible API providers (e.g., MiniMax)
+- `apiBaseUrl` field added to `SaplingConfig` and threaded through `AnthropicClient`
+- `.env.example` file with documented env vars for easy setup
+- `.env` added to `.gitignore`
+
+#### Integration Tests
+- New `src/integration.test.ts` with 4 end-to-end tests using the real Anthropic SDK backend
+- Tests cover: file reading, file creation, bash execution, and CLI stdout output
+- Gated behind `SAPLING_INTEGRATION_TESTS=1` to avoid accidental API costs
+
+#### Testing
+- Tests for `baseURL` passthrough in `AnthropicClient`
+- Tests for `ANTHROPIC_BASE_URL` config loading
+- Proper env var isolation in `loadConfig` tests (save/restore pattern)
+
+### Fixed
+
+#### CLI Output
+- Duplicate `responseText` output removed — response was being printed twice in non-JSON mode
+- `responseText` now correctly emitted as a JSON `"response"` event in `--json` mode
+- TTY-safe timing output — `--timing` no longer emits ANSI escape codes when stderr is not a TTY
+
+#### SDK Backend
+- `AnthropicClient` response filtering now handles unknown block types (e.g., `"thinking"`) from compatible providers instead of mapping them as `tool_use`
+
+### Changed
+- Test suite grown from 354 tests / 26 files / 1076 expects to 358 tests / 27 files / 1081 expects
+
 ## [0.1.2] - 2026-03-03
 
 ### Added
@@ -162,7 +195,8 @@ Initial release of Sapling — a headless coding agent with proactive context ma
 - Real temp directory helpers (`src/test-helpers.ts`)
 - Full coverage of: agent loop, context pipeline (all 5 stages), both LLM clients, all 6 tools, config validation, error hierarchy
 
-[Unreleased]: https://github.com/jayminwest/sapling/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/jayminwest/sapling/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/jayminwest/sapling/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/jayminwest/sapling/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/jayminwest/sapling/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/jayminwest/sapling/releases/tag/v0.1.0
