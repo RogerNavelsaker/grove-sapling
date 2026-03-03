@@ -1,5 +1,9 @@
 # Sapling
 
+[![npm](https://img.shields.io/npm/v/@os-eco/sapling-cli)](https://www.npmjs.com/package/@os-eco/sapling-cli)
+[![CI](https://github.com/jayminwest/sapling/actions/workflows/ci.yml/badge.svg)](https://github.com/jayminwest/sapling/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Headless coding agent with proactive context management.
 
 Sapling is a coding agent where context management is a first-class concern, not an afterthought. Between every LLM call, Sapling evaluates, prunes, and reshapes what the model sees — so it operates at maximum capacity for the entire task, not just the first 20 turns.

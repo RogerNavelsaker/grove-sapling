@@ -41,3 +41,43 @@ export const colors = {
 	gray: (s: string) => c(chalk.gray, s),
 	white: (s: string) => c(chalk.white, s),
 };
+
+// Brand palette — forest green / amber / muted stone
+export const brand = {
+	primary: (s: string) => c((t) => chalk.rgb(76, 175, 80)(t), s),
+	accent: (s: string) => c((t) => chalk.rgb(255, 183, 77)(t), s),
+	muted: (s: string) => c((t) => chalk.rgb(120, 120, 110)(t), s),
+	bold: (s: string) => c((t) => chalk.rgb(76, 175, 80).bold(t), s),
+};
+
+// Status icons — ecosystem Set D
+export const icons = {
+	open: "-",
+	active: ">",
+	closed: "x",
+	blocked: "!",
+};
+
+/**
+ * Format a success message: ✓ <message> [<id>]
+ */
+export function printSuccess(message: string, id?: string): string {
+	const check = brand.bold("✓");
+	const msg = brand.primary(message);
+	const suffix = id ? ` ${brand.accent(id)}` : "";
+	return `${check} ${msg}${suffix}`;
+}
+
+/**
+ * Format an error message: ✗ <message>
+ */
+export function printError(message: string): string {
+	return `${colors.red("✗")} ${colors.red(message)}`;
+}
+
+/**
+ * Format a warning message: ! <message>
+ */
+export function printWarning(message: string): string {
+	return `${colors.yellow("!")} ${colors.yellow(message)}`;
+}
