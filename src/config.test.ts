@@ -36,6 +36,14 @@ describe("validateConfig", () => {
 		expect(() => validateConfig({ contextWindow: 500 })).toThrow(ConfigError);
 	});
 
+	it("throws ConfigError for contextWindow NaN", () => {
+		expect(() => validateConfig({ contextWindow: NaN })).toThrow(ConfigError);
+	});
+
+	it("throws ConfigError for contextWindow Infinity", () => {
+		expect(() => validateConfig({ contextWindow: Infinity })).toThrow(ConfigError);
+	});
+
 	it("throws ConfigError when budget allocations exceed 1.0", () => {
 		expect(() =>
 			validateConfig({

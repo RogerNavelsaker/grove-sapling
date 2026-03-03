@@ -49,7 +49,11 @@ export function validateConfig(config: Partial<SaplingConfig>): SaplingConfig {
 		);
 	}
 
-	if (merged.contextWindow < 1000) {
+	if (
+		Number.isNaN(merged.contextWindow) ||
+		!Number.isFinite(merged.contextWindow) ||
+		merged.contextWindow < 1000
+	) {
 		throw new ConfigError(
 			`contextWindow must be >= 1000, got ${merged.contextWindow}`,
 			"CONFIG_INVALID_CONTEXT_WINDOW",
