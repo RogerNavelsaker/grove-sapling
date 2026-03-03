@@ -35,6 +35,15 @@ describe("completions command", () => {
 		expect(stdout).toContain("complete -c sp -f");
 	});
 
+	test("fish completion uses single __fish_seen_subcommand_from call for no-subcommand condition", async () => {
+		const { stdout, exitCode } = await runCompletions("fish");
+		expect(exitCode).toBe(0);
+		// Must use "not __fish_seen_subcommand_from a b c ..." not "not A; or B"
+		expect(stdout).toMatch(/not __fish_seen_subcommand_from \w+( \w+)*/);
+		// Must NOT use the broken pattern "not __fish_seen_subcommand_from X; or __fish_seen_subcommand_from"
+		expect(stdout).not.toContain("; or __fish_seen_subcommand_from");
+	});
+
 	test("unknown shell exits with error", async () => {
 		const { stderr, exitCode } = await runCompletions("powershell");
 		expect(exitCode).toBe(1);

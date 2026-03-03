@@ -126,12 +126,12 @@ function generateFish(program: Command): string {
 	lines.push("");
 
 	const cmdNames = cmds.map((c) => c.name);
-	const noSubcmdCond = cmdNames.map((n) => `__fish_seen_subcommand_from ${n}`).join("; or ");
+	const noSubcmdCond = `not __fish_seen_subcommand_from ${cmdNames.join(" ")}`;
 
 	for (const cmd of cmds) {
 		const desc = cmd.description.replace(/'/g, "\\'");
-		lines.push(`complete -c sp -n "not ${noSubcmdCond}" -a ${cmd.name} -d '${desc}'`);
-		lines.push(`complete -c sapling -n "not ${noSubcmdCond}" -a ${cmd.name} -d '${desc}'`);
+		lines.push(`complete -c sp -n "${noSubcmdCond}" -a ${cmd.name} -d '${desc}'`);
+		lines.push(`complete -c sapling -n "${noSubcmdCond}" -a ${cmd.name} -d '${desc}'`);
 	}
 
 	lines.push("");
