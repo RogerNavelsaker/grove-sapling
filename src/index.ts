@@ -2,8 +2,9 @@
 import { Command } from "commander";
 import { runCommand } from "./cli.ts";
 import { loadConfig } from "./config.ts";
+import { printJson, printJsonError } from "./json.ts";
 import { setColorEnabled } from "./logging/color.ts";
-import { configure } from "./logging/logger.ts";
+import { configure, logger } from "./logging/logger.ts";
 import type { LlmBackend, RunOptions } from "./types.ts";
 
 export const VERSION = "0.1.0";
@@ -34,6 +35,7 @@ program
 			maxTurns: options.maxTurns ? parseInt(options.maxTurns as string, 10) : undefined,
 			verbose: options.verbose as boolean | undefined,
 			quiet: options.quiet as boolean | undefined,
+			json: options.json as boolean | undefined,
 		};
 
 		const config = loadConfig({
@@ -42,23 +44,34 @@ program
 			...(opts.maxTurns ? { maxTurns: opts.maxTurns } : {}),
 			...(opts.verbose !== undefined ? { verbose: opts.verbose } : {}),
 			...(opts.quiet !== undefined ? { quiet: opts.quiet } : {}),
+			...(opts.json !== undefined ? { json: opts.json } : {}),
 			cwd: (options.cwd as string | undefined) ?? process.cwd(),
 		});
 
-		configure({
-			verbose: config.verbose,
-			quiet: config.quiet,
-			json: options.json as boolean | undefined,
-		});
-		if (config.quiet) {
-			setColorEnabled(false);
-		}
+		configure({ verbose: config.verbose, quiet: config.quiet, json: config.json });
+		setColorEnabled(!config.quiet && !config.json);
 
 		const result = await runCommand(prompt, opts, config);
 
-		if (!config.quiet) {
-			console.error(
-				`\nDone: ${result.exitReason} after ${result.totalTurns} turn(s) ` +
+		if (config.json) {
+			if (result.exitReason === "error") {
+				printJsonError("TASK_ERROR", result.error ?? "Task failed", {
+					exitReason: result.exitReason,
+					totalTurns: result.totalTurns,
+					totalInputTokens: result.totalInputTokens,
+					totalOutputTokens: result.totalOutputTokens,
+				});
+			} else {
+				printJson({
+					exitReason: result.exitReason,
+					totalTurns: result.totalTurns,
+					totalInputTokens: result.totalInputTokens,
+					totalOutputTokens: result.totalOutputTokens,
+				});
+			}
+		} else {
+			logger.info(
+				`Done: ${result.exitReason} after ${result.totalTurns} turn(s) ` +
 					`(${result.totalInputTokens} in / ${result.totalOutputTokens} out tokens)`,
 			);
 		}

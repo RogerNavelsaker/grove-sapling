@@ -25,6 +25,7 @@ export const DEFAULT_CONFIG: SaplingConfig = {
 	cwd: process.cwd(),
 	verbose: false,
 	quiet: false,
+	json: false,
 	contextWindow: DEFAULT_CONTEXT_WINDOW,
 	contextBudget: DEFAULT_BUDGET,
 };

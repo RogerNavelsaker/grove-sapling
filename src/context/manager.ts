@@ -13,6 +13,7 @@
  *   5. RESHAPE  — rebuild messages array for next LLM call
  */
 
+import { logger } from "../logging/logger.ts";
 import type {
 	BudgetUtilization,
 	ContextArchive,
@@ -300,7 +301,7 @@ export class SaplingContextManager implements ContextManager {
 	private logMetrics(metrics: ContextMetrics): void {
 		const b = metrics.beforePruning;
 		const a = metrics.afterPruning;
-		console.error(
+		logger.debug(
 			`[context] turn=${metrics.turn} ` +
 				`before=${b.total.used}/${b.total.budget} ` +
 				`after=${a.total.used}/${a.total.budget} ` +
