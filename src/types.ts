@@ -94,6 +94,8 @@ export interface LoopOptions {
 	eventEmitter?: { emit(event: Record<string, unknown>): void };
 	/** Optional RPC server for JSON-RPC stdin control channel (--mode rpc). */
 	rpcServer?: IRpcServer;
+	/** Optional lifecycle event config from guards.json for orchestrator hooks. */
+	eventConfig?: EventConfig;
 }
 
 export interface LoopResult {
@@ -205,6 +207,16 @@ export interface ToolRegistry {
 
 // ─── Guards Types ─────────────────────────────────────────────────────────────
 
+/**
+ * Lifecycle hook configuration for orchestrators (e.g. overstory).
+ * Each field is an argv array to spawn as a subprocess at the corresponding event.
+ */
+export interface EventConfig {
+	onToolStart?: string[];
+	onToolEnd?: string[];
+	onSessionEnd?: string[];
+}
+
 export type GuardEvent = "pre_tool_call" | "post_tool_call";
 export type GuardAction = "block" | "allow" | "warn";
 
@@ -224,6 +236,7 @@ export interface GuardConfig {
 	readOnly?: boolean; // block all write/edit tools
 	blockedBashPatterns?: string[]; // regex patterns — block bash commands matching any
 	blockedTools?: string[]; // tool names to block entirely
+	eventConfig?: EventConfig; // lifecycle hooks for orchestrators
 }
 
 // ─── Scoring Types ────────────────────────────────────────────────────────────

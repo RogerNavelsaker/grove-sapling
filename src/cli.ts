@@ -18,7 +18,7 @@ import { logger } from "./logging/logger.ts";
 import { runLoop } from "./loop.ts";
 import { RpcServer } from "./rpc/server.ts";
 import { createDefaultRegistry } from "./tools/index.ts";
-import type { LlmClient, LoopOptions, RunOptions, SaplingConfig } from "./types.ts";
+import type { EventConfig, LlmClient, LoopOptions, RunOptions, SaplingConfig } from "./types.ts";
 
 // ─── Default System Prompt ────────────────────────────────────────────────────
 
@@ -84,10 +84,12 @@ export async function runCommand(
 
 	// Load guard config if guards file provided (standalone mode if file not found)
 	let hookManager: HookManager | null = null;
+	let eventConfig: EventConfig | undefined;
 	if (config.guardsFile) {
 		const guardConfig = await loadGuardConfig(config.guardsFile);
 		if (guardConfig) {
 			hookManager = new HookManager(guardConfig);
+			eventConfig = guardConfig.eventConfig;
 		}
 	}
 
@@ -125,6 +127,7 @@ export async function runCommand(
 		hookManager: hookManager ?? undefined,
 		eventEmitter,
 		rpcServer,
+		eventConfig,
 	};
 
 	return runLoop(client, tools, contextManager, loopOptions);
