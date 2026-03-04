@@ -9,6 +9,7 @@
  * 5. Archive accumulates content for long scenarios
  * 6. formatResult produces a non-empty string
  * 7. runAllBenchmarks returns one result per scenario
+ * 8. V1 pipeline metrics are populated when includeV1=true
  */
 
 import { describe, expect, it } from "bun:test";
@@ -25,8 +26,8 @@ import {
 // ─── Scenario structure tests ─────────────────────────────────────────────────
 
 describe("scenarios", () => {
-	it("ALL_SCENARIOS contains 3 scenarios", () => {
-		expect(ALL_SCENARIOS.length).toBe(3);
+	it("ALL_SCENARIOS contains 14 scenarios", () => {
+		expect(ALL_SCENARIOS.length).toBe(14);
 	});
 
 	it("each scenario has a unique id", () => {
@@ -77,12 +78,46 @@ describe("scenarios", () => {
 		expect(assistantMsgs.length).toBeLessThanOrEqual(120);
 	});
 
+	it("all short scenarios have ~10 assistant messages", () => {
+		const shortScenarios = ALL_SCENARIOS.filter((s) => s.id.startsWith("short-"));
+		for (const s of shortScenarios) {
+			const assistantMsgs = s.messages.filter((m) => m.role === "assistant");
+			expect(assistantMsgs.length).toBeGreaterThanOrEqual(8);
+			expect(assistantMsgs.length).toBeLessThanOrEqual(15);
+		}
+	});
+
+	it("all medium scenarios have ~30 assistant messages", () => {
+		const mediumScenarios = ALL_SCENARIOS.filter((s) => s.id.startsWith("medium-"));
+		for (const s of mediumScenarios) {
+			const assistantMsgs = s.messages.filter((m) => m.role === "assistant");
+			expect(assistantMsgs.length).toBeGreaterThanOrEqual(20);
+			expect(assistantMsgs.length).toBeLessThanOrEqual(40);
+		}
+	});
+
+	it("all long scenarios have ~100 assistant messages", () => {
+		const longScenarios = ALL_SCENARIOS.filter((s) => s.id.startsWith("long-"));
+		for (const s of longScenarios) {
+			const assistantMsgs = s.messages.filter((m) => m.role === "assistant");
+			expect(assistantMsgs.length).toBeGreaterThanOrEqual(70);
+			expect(assistantMsgs.length).toBeLessThanOrEqual(130);
+		}
+	});
+
 	it("SHORT expected reduction min is 0", () => {
 		expect(SHORT_SCENARIO.expectedReductionMin).toBe(0);
 	});
 
 	it("LONG expected reduction min is >= 0.3", () => {
 		expect(LONG_SCENARIO.expectedReductionMin).toBeGreaterThanOrEqual(0.3);
+	});
+
+	it("all long scenarios have expectedReductionMin >= 0.3", () => {
+		const longScenarios = ALL_SCENARIOS.filter((s) => s.id.startsWith("long-"));
+		for (const s of longScenarios) {
+			expect(s.expectedReductionMin).toBeGreaterThanOrEqual(0.3);
+		}
 	});
 
 	it("all messages have valid roles", () => {
@@ -154,6 +189,11 @@ describe("runBenchmark result structure", () => {
 	it("expectedReductionMin matches the scenario", () => {
 		const result = runBenchmark(LONG_SCENARIO);
 		expect(result.expectedReductionMin).toBe(LONG_SCENARIO.expectedReductionMin);
+	});
+
+	it("v1 is undefined when includeV1 is not set", () => {
+		const result = runBenchmark(SHORT_SCENARIO);
+		expect(result.v1).toBeUndefined();
 	});
 });
 
@@ -338,6 +378,19 @@ describe("formatResult", () => {
 		const formatted = formatResult(result);
 		expect(formatted).toContain("context limit hits:");
 	});
+
+	it("includes v1 metrics when includeV1=true", () => {
+		const result = runBenchmark(SHORT_SCENARIO, { includeV1: true });
+		const formatted = formatResult(result);
+		expect(formatted).toContain("v1 total tokens:");
+		expect(formatted).toContain("v1 peak util:");
+	});
+
+	it("does not include v1 metrics when includeV1 is not set", () => {
+		const result = runBenchmark(SHORT_SCENARIO);
+		const formatted = formatResult(result);
+		expect(formatted).not.toContain("v1 total tokens:");
+	});
 });
 
 // ─── per-turn metrics tests ───────────────────────────────────────────────────
@@ -373,5 +426,113 @@ describe("per-turn metrics", () => {
 	it("baseline turn count matches managed turn count", () => {
 		const result = runBenchmark(MEDIUM_SCENARIO);
 		expect(result.baselineTurns.length).toBe(result.managedTurns.length);
+	});
+});
+
+// ─── V1 pipeline metrics tests ────────────────────────────────────────────────
+
+describe("v1 pipeline metrics", () => {
+	it("v1 field is populated when includeV1=true", () => {
+		const result = runBenchmark(SHORT_SCENARIO, { includeV1: true });
+		expect(result.v1).toBeDefined();
+	});
+
+	it("v1 totalInputTokens is non-negative", () => {
+		const result = runBenchmark(SHORT_SCENARIO, { includeV1: true });
+		expect(result.v1!.totalInputTokens).toBeGreaterThanOrEqual(0);
+	});
+
+	it("v1 peakUtilization is between 0 and 1", () => {
+		const result = runBenchmark(MEDIUM_SCENARIO, { includeV1: true });
+		expect(result.v1!.peakUtilization).toBeGreaterThanOrEqual(0);
+		expect(result.v1!.peakUtilization).toBeLessThanOrEqual(1);
+	});
+
+	it("v1 meanUtilization is between 0 and 1", () => {
+		const result = runBenchmark(MEDIUM_SCENARIO, { includeV1: true });
+		expect(result.v1!.meanUtilization).toBeGreaterThanOrEqual(0);
+		expect(result.v1!.meanUtilization).toBeLessThanOrEqual(1);
+	});
+
+	it("v1 peakUtilization >= meanUtilization", () => {
+		const result = runBenchmark(MEDIUM_SCENARIO, { includeV1: true });
+		expect(result.v1!.peakUtilization).toBeGreaterThanOrEqual(result.v1!.meanUtilization);
+	});
+
+	it("v1 operationCount > 0 for non-trivial scenarios", () => {
+		const result = runBenchmark(MEDIUM_SCENARIO, { includeV1: true });
+		expect(result.v1!.operationCount).toBeGreaterThan(0);
+	});
+
+	it("v1 compactionRatio is between 0 and 1", () => {
+		const result = runBenchmark(LONG_SCENARIO, { includeV1: true });
+		expect(result.v1!.compactionRatio).toBeGreaterThanOrEqual(0);
+		expect(result.v1!.compactionRatio).toBeLessThanOrEqual(1);
+	});
+
+	it("v1 archiveEntryCount equals archivedCount", () => {
+		const result = runBenchmark(LONG_SCENARIO, { includeV1: true });
+		expect(result.v1!.archiveEntryCount).toBe(result.v1!.archivedCount);
+	});
+
+	it("v1 compactedCount + archivedCount <= operationCount", () => {
+		const result = runBenchmark(LONG_SCENARIO, { includeV1: true });
+		expect(result.v1!.compactedCount + result.v1!.archivedCount).toBeLessThanOrEqual(
+			result.v1!.operationCount,
+		);
+	});
+
+	it("v1 reductionFraction is between 0 and 1", () => {
+		const result = runBenchmark(LONG_SCENARIO, { includeV1: true });
+		expect(result.v1!.reductionFraction).toBeGreaterThanOrEqual(0);
+		expect(result.v1!.reductionFraction).toBeLessThanOrEqual(1);
+	});
+
+	it("v1 turns array has one entry per assistant message", () => {
+		const result = runBenchmark(SHORT_SCENARIO, { includeV1: true });
+		expect(result.v1!.turns.length).toBeGreaterThan(0);
+		expect(result.v1!.turns.length).toBe(result.turns);
+	});
+
+	it("v1 context limit hits is non-negative", () => {
+		const result = runBenchmark(SHORT_SCENARIO, { includeV1: true });
+		expect(result.v1!.contextLimitHits).toBeGreaterThanOrEqual(0);
+	});
+
+	it("v1 hits no context limit on 200K window for LONG scenario", () => {
+		const result = runBenchmark(LONG_SCENARIO, { includeV1: true });
+		expect(result.v1!.contextLimitHits).toBe(0);
+		expect(result.v1!.hitContextLimit).toBe(false);
+	});
+
+	it("v1 reductionPct matches reductionFraction * 100 (rounded)", () => {
+		const result = runBenchmark(MEDIUM_SCENARIO, { includeV1: true });
+		const expected = Math.round(result.v1!.reductionFraction * 100 * 10) / 10;
+		expect(result.v1!.reductionPct).toBe(expected);
+	});
+});
+
+// ─── Comparison: v0 vs v1 ────────────────────────────────────────────────────
+
+describe("v0 vs v1 comparison", () => {
+	it("both v0 and v1 run without error on all scenarios", () => {
+		for (const scenario of ALL_SCENARIOS) {
+			const result = runBenchmark(scenario, { includeV1: true });
+			expect(result.managedTotalInputTokens).toBeGreaterThanOrEqual(0);
+			expect(result.v1!.totalInputTokens).toBeGreaterThanOrEqual(0);
+		}
+	});
+
+	it("v1 produces valid utilization for all scenarios", () => {
+		for (const scenario of ALL_SCENARIOS) {
+			const result = runBenchmark(scenario, { includeV1: true });
+			expect(result.v1!.peakUtilization).toBeGreaterThanOrEqual(0);
+			expect(result.v1!.meanUtilization).toBeGreaterThanOrEqual(0);
+		}
+	});
+
+	it("v1 operation count is positive for non-trivial scenarios", () => {
+		const longResult = runBenchmark(LONG_SCENARIO, { includeV1: true });
+		expect(longResult.v1!.operationCount).toBeGreaterThan(0);
 	});
 });

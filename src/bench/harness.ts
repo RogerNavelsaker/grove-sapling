@@ -7,7 +7,8 @@
  *
  * ## Modes
  * - **baseline**: no context management — accumulate all messages each turn
- * - **managed**: SaplingContextManager runs between every turn
+ * - **managed**: SaplingContextManager (v0) runs between every turn
+ * - **v1**: SaplingPipelineV1 runs between every turn
  *
  * ## Success Criteria (from MVP spec step 7)
  * 1. Token usage 30–50% less than baseline on long tasks
@@ -18,6 +19,7 @@
 import { renderArchive } from "../context/archive.ts";
 import { SaplingContextManager } from "../context/manager.ts";
 import { estimateTokens } from "../context/measure.ts";
+import { extractTurnHint, SaplingPipelineV1 } from "../context/v1/pipeline.ts";
 import type { BudgetUtilization, ContextBudget, Message, TokenUsage } from "../types.ts";
 import type { BenchmarkScenario } from "./scenarios.ts";
 
@@ -33,6 +35,16 @@ export interface TurnMetrics {
 	utilization: BudgetUtilization;
 }
 
+/** Per-turn metrics specific to the v1 pipeline. */
+export interface V1TurnMetrics {
+	turn: number;
+	inputTokens: number;
+	messageCount: number;
+	/** Overall context utilization fraction (0.0–1.0) from PipelineState. */
+	utilization: number;
+	operationCount: number;
+}
+
 export interface BenchmarkResult {
 	scenarioId: string;
 	scenarioName: string;
@@ -45,7 +57,7 @@ export interface BenchmarkResult {
 	/** Average input tokens per turn without context management. */
 	baselineAvgInputTokens: number;
 
-	// ── Managed (with context management) ─────────────────────────────────────
+	// ── Managed (v0 — with context management) ────────────────────────────────
 	/** Sum of estimated input tokens across all turns with context management. */
 	managedTotalInputTokens: number;
 	/** Average input tokens per turn with context management. */
@@ -84,6 +96,39 @@ export interface BenchmarkResult {
 	passesCoherence: boolean;
 	/** All criteria pass. */
 	passes: boolean;
+
+	// ── V1 metrics (populated only when v1 run included) ──────────────────────
+	v1?: V1BenchmarkMetrics;
+}
+
+/** v1 pipeline-specific metrics appended to BenchmarkResult. */
+export interface V1BenchmarkMetrics {
+	/** Sum of estimated input tokens across all turns with v1 context management. */
+	totalInputTokens: number;
+	/** Average input tokens per turn. */
+	avgInputTokens: number;
+	/** Fraction of baseline tokens saved by v1. */
+	reductionFraction: number;
+	reductionPct: number;
+	/** Peak utilization fraction across all turns. */
+	peakUtilization: number;
+	/** Mean utilization fraction across all turns. */
+	meanUtilization: number;
+	/** Total operations created during the run. */
+	operationCount: number;
+	/** Operations that were compacted. */
+	compactedCount: number;
+	/** Operations that were archived. */
+	archivedCount: number;
+	/** Fraction of operations compacted (compacted / total). */
+	compactionRatio: number;
+	/** Archive entry count at end of run (= archivedCount). */
+	archiveEntryCount: number;
+	/** Turns where v1 context exceeded the window budget. */
+	contextLimitHits: number;
+	hitContextLimit: boolean;
+	/** Per-turn detail. */
+	turns: V1TurnMetrics[];
 }
 
 // ─── Harness Options ──────────────────────────────────────────────────────────
@@ -103,6 +148,10 @@ export interface HarnessOptions {
 	 * need the managed metrics.
 	 */
 	managedOnly?: boolean;
+	/**
+	 * If true, also run the v1 pipeline and include v1 metrics in the result.
+	 */
+	includeV1?: boolean;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -246,7 +295,7 @@ function runBaseline(
 	return { total: totalInputTokens, turns: turnMetrics };
 }
 
-// ─── Managed Runner ───────────────────────────────────────────────────────────
+// ─── Managed Runner (v0) ──────────────────────────────────────────────────────
 
 /**
  * Run the managed pass: apply SaplingContextManager between every turn.
@@ -335,6 +384,121 @@ function runManaged(
 	return { total: totalInputTokens, turns: turnMetrics, contextLimitHits, archiveFinalTokens };
 }
 
+// ─── V1 Runner ────────────────────────────────────────────────────────────────
+
+/**
+ * Run the v1 pipeline pass: apply SaplingPipelineV1 between every turn.
+ *
+ * Extracts TurnHint from each turn's assistant+toolResults pair using the
+ * same extractTurnHint helper used in loop.ts.
+ */
+function runV1(
+	taskPrompt: string,
+	scenarioMessages: Message[],
+	windowSize: number,
+	systemPrompt: string,
+): V1BenchmarkMetrics {
+	const pipeline = new SaplingPipelineV1({ windowSize });
+
+	const turnMetrics: V1TurnMetrics[] = [];
+	let totalInputTokens = 0;
+	let contextLimitHits = 0;
+
+	// Seed with task prompt
+	let messages: Message[] = [{ role: "user", content: taskPrompt }];
+
+	let turnNumber = 0;
+	let i = 0;
+
+	while (i < scenarioMessages.length) {
+		const msg = scenarioMessages[i];
+		if (!msg) break;
+
+		if (msg.role === "assistant") {
+			turnNumber++;
+
+			// Measure input tokens (current managed context)
+			const inputTokens = estimateContextTokens(messages);
+			totalInputTokens += inputTokens;
+
+			if (inputTokens > windowSize) {
+				contextLimitHits++;
+			}
+
+			// Append assistant message
+			messages.push(msg);
+
+			// Collect tool results if present
+			const next = scenarioMessages[i + 1];
+			const hasResults = next !== undefined && next.role === "user";
+
+			if (hasResults && next) {
+				i++;
+				messages.push(next);
+			}
+			i++;
+
+			// Build TurnHint from recent messages (assistant + toolResults pair)
+			const turnHint = extractTurnHint(messages, turnNumber);
+
+			// Run v1 pipeline
+			const output = pipeline.process({
+				messages,
+				systemPrompt,
+				turnHint,
+				usage: dummyUsage(inputTokens),
+			});
+
+			messages = output.messages;
+			const state = output.state;
+
+			turnMetrics.push({
+				turn: turnNumber,
+				inputTokens,
+				messageCount: messages.length,
+				utilization: state.utilization,
+				operationCount: state.operations.length,
+			});
+		} else {
+			// Standalone user message — just append
+			messages.push(msg);
+			i++;
+		}
+	}
+
+	// Compute v1 aggregate metrics from final pipeline state
+	const finalState = pipeline.getState();
+	const allOps = finalState?.operations ?? [];
+	const operationCount = allOps.length;
+	const compactedCount = allOps.filter((op) => op.status === "compacted").length;
+	const archivedCount = allOps.filter((op) => op.status === "archived").length;
+	const compactionRatio = operationCount > 0 ? compactedCount / operationCount : 0;
+
+	const utilizationValues = turnMetrics.map((t) => t.utilization);
+	const peakUtilization = utilizationValues.length > 0 ? Math.max(...utilizationValues) : 0;
+	const meanUtilization =
+		utilizationValues.length > 0
+			? utilizationValues.reduce((s, u) => s + u, 0) / utilizationValues.length
+			: 0;
+
+	return {
+		totalInputTokens,
+		avgInputTokens: turnMetrics.length > 0 ? Math.round(totalInputTokens / turnMetrics.length) : 0,
+		reductionFraction: 0, // computed later against baseline
+		reductionPct: 0,
+		peakUtilization,
+		meanUtilization,
+		operationCount,
+		compactedCount,
+		archivedCount,
+		compactionRatio,
+		archiveEntryCount: archivedCount,
+		contextLimitHits,
+		hitContextLimit: contextLimitHits > 0,
+		turns: turnMetrics,
+	};
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -365,8 +529,23 @@ export function runBenchmark(
 		? { total: 0, turns: [] as TurnMetrics[] }
 		: runBaseline(scenario.taskPrompt, scenario.messages, budget);
 
-	// Run managed
+	// Run managed (v0)
 	const managed = runManaged(scenario.taskPrompt, scenario.messages, budget, systemPrompt);
+
+	// Run v1 if requested
+	let v1Metrics: V1BenchmarkMetrics | undefined;
+	if (options.includeV1) {
+		const raw = runV1(scenario.taskPrompt, scenario.messages, budget.windowSize, systemPrompt);
+		// Compute reduction against baseline
+		const baseTotal = baseline.total;
+		const v1ReductionFraction =
+			baseTotal > 0 ? Math.max(0, (baseTotal - raw.totalInputTokens) / baseTotal) : 0;
+		v1Metrics = {
+			...raw,
+			reductionFraction: v1ReductionFraction,
+			reductionPct: Math.round(v1ReductionFraction * 100 * 10) / 10,
+		};
+	}
 
 	const baselineTotalInputTokens = baseline.total;
 	const managedTotalInputTokens = managed.total;
@@ -417,6 +596,8 @@ export function runBenchmark(
 		passesNoLimitHit,
 		passesCoherence,
 		passes: passesReduction && passesNoLimitHit && passesCoherence,
+
+		...(v1Metrics !== undefined ? { v1: v1Metrics } : {}),
 	};
 }
 
@@ -444,5 +625,14 @@ export function formatResult(result: BenchmarkResult): string {
 		`  context limit hits: ${result.contextLimitHits}  ${result.passesNoLimitHit ? "✓" : "✗"}`,
 		`  archive tokens: ${result.archiveFinalTokens}  ${result.passesCoherence ? "✓" : "✗"}`,
 	];
+	if (result.v1) {
+		const v1 = result.v1;
+		lines.push(
+			`  v1 total tokens: ${v1.totalInputTokens.toLocaleString()} (avg ${v1.avgInputTokens.toLocaleString()}/turn)`,
+			`  v1 reduction: ${v1.reductionPct}%`,
+			`  v1 peak util: ${(v1.peakUtilization * 100).toFixed(1)}%  mean util: ${(v1.meanUtilization * 100).toFixed(1)}%`,
+			`  v1 ops: ${v1.operationCount} total, ${v1.compactedCount} compacted, ${v1.archivedCount} archived (compaction ratio: ${(v1.compactionRatio * 100).toFixed(0)}%)`,
+		);
+	}
 	return lines.join("\n");
 }
