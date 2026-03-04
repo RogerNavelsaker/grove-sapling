@@ -3,6 +3,8 @@ domains:
   - architecture
   - sapling
   - agents
+  - context-pipeline
+  - minimax
 governance:
   max_entries: 100
   warn_entries: 150
