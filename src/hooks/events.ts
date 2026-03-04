@@ -11,6 +11,7 @@
  *   tool_start — before each tool execution
  *   tool_end   — after each tool, with duration and success
  *   turn_end   — after each LLM call, with token counts and model
+ *   progress   — at meaningful milestones, with estimated percent complete and subtask label
  *   result     — when run loop exits, with outcome and summary
  *   error      — on failures, with message and classification
  */
@@ -90,6 +91,16 @@ export class EventEmitter {
 			model,
 			contextUtilization,
 		});
+	}
+
+	/**
+	 * Emitted at meaningful milestones to report estimated progress.
+	 * @param percent - Estimated completion percentage (0–100). Can be derived from turn/maxTurns ratio.
+	 * @param subtask - Human-readable description of the current activity (e.g. 'Running tests').
+	 * @param filesChanged - Number of files modified so far in this run.
+	 */
+	progress(percent: number, subtask: string, filesChanged: number): void {
+		this.emit({ type: "progress", percent, subtask, filesChanged });
 	}
 
 	/** Emitted once when the agent loop finishes (all exit paths). */

@@ -46,6 +46,7 @@ describe("EventEmitter", () => {
 			emitter.toolStart(1, "bash", "t1", "{}");
 			emitter.toolEnd(1, "bash", "t1", true, 42);
 			emitter.turnEnd(1, 100, 50, 0, 0, "claude", 0.5);
+			emitter.progress(50, "Running tests", 3);
 			emitter.result("success", "done", 1, 100, 50);
 			emitter.error("boom", "TRANSIENT");
 			expect(writeSpy).not.toHaveBeenCalled();
@@ -192,6 +193,33 @@ describe("EventEmitter", () => {
 			expect(parsed.type).toBe("error");
 			expect(parsed.message).toBe("Authentication failed");
 			expect(parsed.classification).toBe("AUTH_FAILED");
+		});
+
+		it("progress() emits correct shape", () => {
+			const emitter = new EventEmitter(true);
+			emitter.progress(75, "Writing implementation", 5);
+			const parsed = parseFirstEvent(writeSpy);
+			expect(parsed.type).toBe("progress");
+			expect(parsed.percent).toBe(75);
+			expect(parsed.subtask).toBe("Writing implementation");
+			expect(parsed.filesChanged).toBe(5);
+		});
+
+		it("progress() emits 0 percent at start", () => {
+			const emitter = new EventEmitter(true);
+			emitter.progress(0, "Starting task", 0);
+			const parsed = parseFirstEvent(writeSpy);
+			expect(parsed.type).toBe("progress");
+			expect(parsed.percent).toBe(0);
+			expect(parsed.filesChanged).toBe(0);
+		});
+
+		it("progress() emits 100 percent at completion", () => {
+			const emitter = new EventEmitter(true);
+			emitter.progress(100, "Task complete", 12);
+			const parsed = parseFirstEvent(writeSpy);
+			expect(parsed.percent).toBe(100);
+			expect(parsed.subtask).toBe("Task complete");
 		});
 
 		it("multiple emits produce separate newline-terminated lines", () => {
