@@ -4,8 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	DEFAULT_CONFIG,
+	findProjectConfigDir,
 	loadConfig,
 	loadGuardConfig,
+	loadYamlConfigFile,
+	parseYamlConfig,
 	resolveModelAlias,
 	resolveProvider,
 	validateConfig,
@@ -315,5 +318,211 @@ describe("resolveProvider", () => {
 
 	it("defaults unknown models to anthropic provider", () => {
 		expect(resolveProvider("some-other-model")).toBe("anthropic");
+	});
+});
+
+describe("parseYamlConfig", () => {
+	it("parses model field", () => {
+		const result = parseYamlConfig("model: claude-opus-4-6\n");
+		expect(result.model).toBe("claude-opus-4-6");
+	});
+
+	it("parses max_turns as integer", () => {
+		const result = parseYamlConfig("max_turns: 50\n");
+		expect(result.maxTurns).toBe(50);
+	});
+
+	it("parses backend field", () => {
+		const result = parseYamlConfig("backend: sdk\n");
+		expect(result.backend).toBe("sdk");
+	});
+
+	it("parses context_window as integer", () => {
+		const result = parseYamlConfig("context_window: 100000\n");
+		expect(result.contextWindow).toBe(100000);
+	});
+
+	it("parses api_base_url", () => {
+		const result = parseYamlConfig("api_base_url: https://example.com\n");
+		expect(result.apiBaseUrl).toBe("https://example.com");
+	});
+
+	it("parses api_key", () => {
+		const result = parseYamlConfig("api_key: sk-test\n");
+		expect(result.apiKey).toBe("sk-test");
+	});
+
+	it("strips double quotes from string values", () => {
+		const result = parseYamlConfig('model: "claude-sonnet-4-6"\n');
+		expect(result.model).toBe("claude-sonnet-4-6");
+	});
+
+	it("strips single quotes from string values", () => {
+		const result = parseYamlConfig("model: 'claude-sonnet-4-6'\n");
+		expect(result.model).toBe("claude-sonnet-4-6");
+	});
+
+	it("ignores unknown keys silently", () => {
+		const result = parseYamlConfig("project: my-app\ncontext_pipeline: v1\n");
+		expect(Object.keys(result)).toHaveLength(0);
+	});
+
+	it("ignores comment lines", () => {
+		const result = parseYamlConfig("# This is a comment\nmodel: claude-opus-4-6\n");
+		expect(result.model).toBe("claude-opus-4-6");
+	});
+
+	it("ignores empty lines", () => {
+		const result = parseYamlConfig("\n\nmodel: claude-opus-4-6\n\n");
+		expect(result.model).toBe("claude-opus-4-6");
+	});
+
+	it("ignores invalid backend values", () => {
+		const result = parseYamlConfig("backend: invalid\n");
+		expect(result.backend).toBeUndefined();
+	});
+
+	it("ignores non-numeric max_turns", () => {
+		const result = parseYamlConfig("max_turns: abc\n");
+		expect(result.maxTurns).toBeUndefined();
+	});
+
+	it("parses multiple fields together", () => {
+		const yaml = [
+			"# Sapling project configuration",
+			'project: "my-app"',
+			"model: claude-sonnet-4-6",
+			"max_turns: 100",
+			"context_pipeline: v1",
+			"",
+		].join("\n");
+		const result = parseYamlConfig(yaml);
+		expect(result.model).toBe("claude-sonnet-4-6");
+		expect(result.maxTurns).toBe(100);
+		expect((result as Record<string, unknown>).project).toBeUndefined();
+	});
+});
+
+describe("findProjectConfigDir", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = join(
+			tmpdir(),
+			`sapling-find-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+		);
+		mkdirSync(tmpDir, { recursive: true });
+	});
+
+	it("finds .sapling/config.yaml in given directory", () => {
+		const saplingDir = join(tmpDir, ".sapling");
+		mkdirSync(saplingDir, { recursive: true });
+		writeFileSync(join(saplingDir, "config.yaml"), "model: claude-sonnet-4-6\n");
+		const result = findProjectConfigDir(tmpDir);
+		expect(result).toBe(saplingDir);
+	});
+
+	it("finds .sapling/config.yaml in parent directory", () => {
+		const saplingDir = join(tmpDir, ".sapling");
+		mkdirSync(saplingDir, { recursive: true });
+		writeFileSync(join(saplingDir, "config.yaml"), "model: claude-sonnet-4-6\n");
+		const subDir = join(tmpDir, "sub", "deep");
+		mkdirSync(subDir, { recursive: true });
+		const result = findProjectConfigDir(subDir);
+		expect(result).toBe(saplingDir);
+	});
+
+	it("returns null when no .sapling/config.yaml is found", () => {
+		const result = findProjectConfigDir(tmpDir);
+		expect(result).toBeNull();
+	});
+});
+
+describe("loadYamlConfigFile", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = join(tmpdir(), `sapling-yaml-test-${Date.now()}`);
+		mkdirSync(tmpDir, { recursive: true });
+	});
+
+	it("returns empty object for missing file", async () => {
+		const result = await loadYamlConfigFile(join(tmpDir, "nonexistent.yaml"));
+		expect(result).toEqual({});
+	});
+
+	it("loads and parses a valid YAML config file", async () => {
+		const filePath = join(tmpDir, "config.yaml");
+		writeFileSync(filePath, "model: claude-opus-4-6\nmax_turns: 42\n");
+		const result = await loadYamlConfigFile(filePath);
+		expect(result.model).toBe("claude-opus-4-6");
+		expect(result.maxTurns).toBe(42);
+	});
+});
+
+describe("loadConfig precedence", () => {
+	let tmpDir: string;
+	const ENV_KEYS = [
+		"SAPLING_MODEL",
+		"SAPLING_BACKEND",
+		"SAPLING_MAX_TURNS",
+		"SAPLING_CONTEXT_WINDOW",
+		"ANTHROPIC_BASE_URL",
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_AUTH_TOKEN",
+	] as const;
+	let savedEnv: Record<string, string | undefined>;
+
+	beforeEach(() => {
+		tmpDir = join(tmpdir(), `sapling-prec-test-${Date.now()}`);
+		mkdirSync(tmpDir, { recursive: true });
+		savedEnv = {};
+		for (const key of ENV_KEYS) {
+			savedEnv[key] = process.env[key];
+			delete process.env[key];
+		}
+	});
+
+	afterEach(() => {
+		for (const key of ENV_KEYS) {
+			if (savedEnv[key] === undefined) {
+				delete process.env[key];
+			} else {
+				process.env[key] = savedEnv[key];
+			}
+		}
+	});
+
+	it("project config overrides env vars", async () => {
+		process.env.SAPLING_MODEL = "claude-haiku-4-5-20251001";
+		const saplingDir = join(tmpDir, ".sapling");
+		mkdirSync(saplingDir, { recursive: true });
+		writeFileSync(join(saplingDir, "config.yaml"), "model: claude-opus-4-6\n");
+		const config = await loadConfig({ cwd: tmpDir });
+		expect(config.model).toBe("claude-opus-4-6");
+	});
+
+	it("CLI overrides project config", async () => {
+		const saplingDir = join(tmpDir, ".sapling");
+		mkdirSync(saplingDir, { recursive: true });
+		writeFileSync(join(saplingDir, "config.yaml"), "model: claude-opus-4-6\n");
+		const config = await loadConfig({ cwd: tmpDir, model: "claude-haiku-4-5-20251001" });
+		expect(config.model).toBe("claude-haiku-4-5-20251001");
+	});
+
+	it("env vars override defaults when no project config", async () => {
+		process.env.SAPLING_MAX_TURNS = "77";
+		const config = await loadConfig({ cwd: tmpDir });
+		expect(config.maxTurns).toBe(77);
+	});
+
+	it("project config is found by walking up from cwd", async () => {
+		const saplingDir = join(tmpDir, ".sapling");
+		mkdirSync(saplingDir, { recursive: true });
+		writeFileSync(join(saplingDir, "config.yaml"), "max_turns: 55\n");
+		const subDir = join(tmpDir, "nested");
+		mkdirSync(subDir, { recursive: true });
+		const config = await loadConfig({ cwd: subDir });
+		expect(config.maxTurns).toBe(55);
 	});
 });

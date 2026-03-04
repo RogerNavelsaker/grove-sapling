@@ -4,10 +4,13 @@
 
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { readAuthStore } from "./commands/auth.ts";
 import { ConfigError } from "./errors.ts";
 import type { ContextBudget, GuardConfig, LlmBackend, SaplingConfig } from "./types.ts";
+
+const HOME_CONFIG_PATH = join(homedir(), ".sapling", "config.yaml");
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 
@@ -59,6 +62,85 @@ export function resolveModelAlias(model: string): string {
 	const upper = model.toUpperCase();
 	const envKey = `ANTHROPIC_DEFAULT_${upper}_MODEL`;
 	return process.env[envKey] ?? model;
+}
+
+/**
+ * Minimal flat YAML parser for .sapling/config.yaml.
+ * Handles comment lines (#), blank lines, and key: value pairs.
+ * String values may be optionally quoted. Unknown keys are ignored silently.
+ */
+export function parseYamlConfig(raw: string): Partial<SaplingConfig> {
+	const result: Partial<SaplingConfig> = {};
+	for (const line of raw.split("\n")) {
+		const trimmed = line.trim();
+		if (!trimmed || trimmed.startsWith("#")) continue;
+		const colonIdx = trimmed.indexOf(":");
+		if (colonIdx < 0) continue;
+		const key = trimmed.slice(0, colonIdx).trim();
+		const rawVal = trimmed.slice(colonIdx + 1).trim();
+		// Strip surrounding quotes from string values
+		const val = rawVal.replace(/^["']|["']$/g, "");
+		switch (key) {
+			case "model":
+				if (val) result.model = val;
+				break;
+			case "backend":
+				if (VALID_BACKENDS.includes(val as LlmBackend)) result.backend = val as LlmBackend;
+				break;
+			case "max_turns": {
+				const n = parseInt(val, 10);
+				if (!Number.isNaN(n)) result.maxTurns = n;
+				break;
+			}
+			case "context_window": {
+				const n = parseInt(val, 10);
+				if (!Number.isNaN(n)) result.contextWindow = n;
+				break;
+			}
+			case "api_base_url":
+				if (val) result.apiBaseUrl = val;
+				break;
+			case "api_key":
+				if (val) result.apiKey = val;
+				break;
+			default:
+				// Silently ignore unknown keys (e.g. project, context_pipeline)
+				break;
+		}
+	}
+	return result;
+}
+
+/**
+ * Walk up the directory tree from startDir looking for a directory that contains
+ * .sapling/config.yaml. Returns the .sapling/ directory path if found, null otherwise.
+ */
+export function findProjectConfigDir(startDir: string): string | null {
+	let current = resolve(startDir);
+	while (true) {
+		const candidate = join(current, ".sapling", "config.yaml");
+		if (existsSync(candidate)) {
+			return join(current, ".sapling");
+		}
+		const parent = dirname(current);
+		if (parent === current) return null; // reached filesystem root
+		current = parent;
+	}
+}
+
+/**
+ * Read and parse a YAML config file. Returns empty object if file doesn't exist.
+ * Throws ConfigError if the file exists but cannot be read or parsed.
+ */
+export async function loadYamlConfigFile(filePath: string): Promise<Partial<SaplingConfig>> {
+	if (!existsSync(filePath)) return {};
+	let raw: string;
+	try {
+		raw = await readFile(filePath, "utf-8");
+	} catch (_err) {
+		throw new ConfigError(`Failed to read config file: ${filePath}`, "CONFIG_FILE_NOT_FOUND");
+	}
+	return parseYamlConfig(raw);
 }
 
 export function validateConfig(config: Partial<SaplingConfig>): SaplingConfig {
@@ -138,10 +220,15 @@ export async function loadGuardConfig(filePath: string): Promise<GuardConfig | n
 }
 
 /**
- * Load config from environment variables and auth store, merging with provided overrides.
- * Auth store (~/.sapling/auth.json) is used as a fallback when env vars are not set.
+ * Load config from YAML files, environment variables, and auth store, merging with provided
+ * overrides. Precedence (highest to lowest):
+ *   CLI flags (overrides) > project .sapling/config.yaml > env vars > ~/.sapling/config.yaml > defaults
  */
 export async function loadConfig(overrides: Partial<SaplingConfig> = {}): Promise<SaplingConfig> {
+	// Home-level config (~/.sapling/config.yaml) — lowest file-based precedence
+	const fromHome = await loadYamlConfigFile(HOME_CONFIG_PATH);
+
+	// Env vars — override home config
 	const fromEnv: Partial<SaplingConfig> = {};
 
 	const envModel = process.env.SAPLING_MODEL;
@@ -171,19 +258,27 @@ export async function loadConfig(overrides: Partial<SaplingConfig> = {}): Promis
 	const envApiKey = process.env.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_AUTH_TOKEN;
 	if (envApiKey) fromEnv.apiKey = envApiKey;
 
-	// Fall back to auth store when env vars don't provide credentials.
-	if (!fromEnv.apiKey) {
-		const model = overrides.model ?? fromEnv.model ?? DEFAULT_CONFIG.model;
+	// Project-level config (.sapling/config.yaml) — overrides env vars
+	const startDir = overrides.cwd ?? process.cwd();
+	const projectConfigDir = findProjectConfigDir(startDir);
+	const fromProject = projectConfigDir
+		? await loadYamlConfigFile(join(projectConfigDir, "config.yaml"))
+		: {};
+
+	// Fall back to auth store when no source provides credentials.
+	const mergedForAuth = { ...fromHome, ...fromEnv, ...fromProject, ...overrides };
+	if (!mergedForAuth.apiKey) {
+		const model = mergedForAuth.model ?? DEFAULT_CONFIG.model;
 		const provider = resolveProvider(model);
 		const store = await readAuthStore();
 		const creds = store.providers[provider];
 		if (creds) {
 			fromEnv.apiKey = creds.apiKey;
-			if (!fromEnv.apiBaseUrl) {
+			if (!mergedForAuth.apiBaseUrl) {
 				fromEnv.apiBaseUrl = creds.baseUrl ?? PROVIDER_BASE_URLS[provider];
 			}
 		}
 	}
 
-	return validateConfig({ ...fromEnv, ...overrides });
+	return validateConfig({ ...fromHome, ...fromEnv, ...fromProject, ...overrides });
 }
