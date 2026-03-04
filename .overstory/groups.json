@@ -177,9 +177,9 @@
 			"sapling-f4ef",
 			"sapling-f32d"
 		],
-		"status": "active",
+		"status": "completed",
 		"createdAt": "2026-03-04T00:53:19.227Z",
-		"completedAt": null
+		"completedAt": "2026-03-04T14:20:43.613Z"
 	},
 	{
 		"id": "group-91ae3df2",
@@ -190,5 +190,57 @@
 		"status": "completed",
 		"createdAt": "2026-03-04T01:46:52.420Z",
 		"completedAt": "2026-03-04T02:09:44.943Z"
+	},
+	{
+		"id": "group-ff9711a3",
+		"name": "sapling-event-auth-batch",
+		"memberIssueIds": [
+			"sapling-a780",
+			"sapling-6db5",
+			"sapling-f886",
+			"sapling-2c0d",
+			"sapling-b946",
+			"sapling-17ec",
+			"sapling-d6fe"
+		],
+		"status": "completed",
+		"createdAt": "2026-03-04T14:09:16.872Z",
+		"completedAt": "2026-03-04T14:20:05.301Z"
+	},
+	{
+		"id": "group-841a04e4",
+		"name": "sapling-rpc-events-batch",
+		"memberIssueIds": [
+			"sapling-5320",
+			"sapling-0c7b",
+			"sapling-a229",
+			"sapling-f409",
+			"sapling-b2f8",
+			"sapling-f889",
+			"sapling-9b63",
+			"sapling-f6ef"
+		],
+		"status": "completed",
+		"createdAt": "2026-03-04T14:22:05.070Z",
+		"completedAt": "2026-03-04T14:46:56.999Z"
+	},
+	{
+		"id": "group-8c3b0704",
+		"name": "context-pipeline-v1",
+		"memberIssueIds": [
+			"sapling-373d",
+			"sapling-4412",
+			"sapling-bcbf",
+			"sapling-5f80",
+			"sapling-0ca9",
+			"sapling-583b",
+			"sapling-da75",
+			"sapling-4754",
+			"sapling-7cea",
+			"sapling-e0fc"
+		],
+		"status": "completed",
+		"createdAt": "2026-03-04T16:25:27.678Z",
+		"completedAt": "2026-03-04T17:39:34.787Z"
 	}
 ]

@@ -13,7 +13,7 @@ import { colors, setColorEnabled } from "./logging/color.ts";
 import { configure, logger } from "./logging/logger.ts";
 import type { LlmBackend, RunOptions } from "./types.ts";
 
-export const VERSION = "0.1.5";
+export const VERSION = "0.2.0";
 
 const startTime = Date.now();
 
@@ -84,8 +84,7 @@ program
 				}
 
 				const contextPipelineRaw = options.contextPipeline as string | undefined;
-				const contextPipeline: "v0" | "v1" | undefined =
-					contextPipelineRaw === "v1" ? "v1" : contextPipelineRaw === "v0" ? "v0" : undefined;
+				const contextPipeline: "v0" | "v1" = contextPipelineRaw === "v0" ? "v0" : "v1";
 
 				const opts: RunOptions = {
 					systemPromptFile: options.systemPromptFile as string | undefined,
