@@ -167,15 +167,11 @@ The SDK backend is the recommended default and auto-detects when running inside 
 
 ## Part of os-eco
 
-Sapling is part of the [os-eco](https://github.com/jayminwest/os-eco) AI agent tooling ecosystem:
+Sapling is part of the [os-eco](https://github.com/jayminwest/os-eco) AI agent tooling ecosystem.
 
-| Tool | Purpose |
-|------|---------|
-| [Mulch](https://github.com/jayminwest/mulch) | Structured expertise management |
-| [Seeds](https://github.com/jayminwest/seeds) | Git-native issue tracking |
-| [Canopy](https://github.com/jayminwest/canopy) | Prompt management & composition |
-| [Overstory](https://github.com/jayminwest/overstory) | Multi-agent orchestration |
-| **Sapling** | Headless coding agent |
+<p align="center">
+  <img src="https://raw.githubusercontent.com/jayminwest/os-eco/main/branding/logo.png" alt="os-eco" width="444" />
+</p>
 
 ## Environment Variables
 
