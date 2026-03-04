@@ -142,5 +142,9 @@ export function loadConfig(overrides: Partial<SaplingConfig> = {}): SaplingConfi
 	const envBaseUrl = process.env.ANTHROPIC_BASE_URL;
 	if (envBaseUrl) fromEnv.apiBaseUrl = envBaseUrl;
 
+	// ANTHROPIC_API_KEY is the canonical env var; ANTHROPIC_AUTH_TOKEN is a fallback alias.
+	const envApiKey = process.env.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_AUTH_TOKEN;
+	if (envApiKey) fromEnv.apiKey = envApiKey;
+
 	return validateConfig({ ...fromEnv, ...overrides });
 }

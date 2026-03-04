@@ -72,6 +72,8 @@ describe("loadConfig", () => {
 		"SAPLING_MAX_TURNS",
 		"SAPLING_CONTEXT_WINDOW",
 		"ANTHROPIC_BASE_URL",
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_AUTH_TOKEN",
 	] as const;
 	let savedEnv: Record<string, string | undefined>;
 
@@ -112,6 +114,30 @@ describe("loadConfig", () => {
 	it("leaves apiBaseUrl undefined when ANTHROPIC_BASE_URL is not set", () => {
 		const config = loadConfig();
 		expect(config.apiBaseUrl).toBeUndefined();
+	});
+
+	it("reads ANTHROPIC_API_KEY into apiKey", () => {
+		process.env.ANTHROPIC_API_KEY = "sk-test-primary";
+		const config = loadConfig();
+		expect(config.apiKey).toBe("sk-test-primary");
+	});
+
+	it("falls back to ANTHROPIC_AUTH_TOKEN when ANTHROPIC_API_KEY is not set", () => {
+		process.env.ANTHROPIC_AUTH_TOKEN = "sk-test-fallback";
+		const config = loadConfig();
+		expect(config.apiKey).toBe("sk-test-fallback");
+	});
+
+	it("prefers ANTHROPIC_API_KEY over ANTHROPIC_AUTH_TOKEN when both are set", () => {
+		process.env.ANTHROPIC_API_KEY = "sk-test-primary";
+		process.env.ANTHROPIC_AUTH_TOKEN = "sk-test-fallback";
+		const config = loadConfig();
+		expect(config.apiKey).toBe("sk-test-primary");
+	});
+
+	it("leaves apiKey undefined when neither ANTHROPIC_API_KEY nor ANTHROPIC_AUTH_TOKEN is set", () => {
+		const config = loadConfig();
+		expect(config.apiKey).toBeUndefined();
 	});
 });
 

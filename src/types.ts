@@ -131,6 +131,7 @@ export interface SaplingConfig {
 	contextWindow: number;
 	contextBudget: ContextBudget;
 	apiBaseUrl?: string;
+	apiKey?: string;
 	guardsFile?: string;
 }
 
