@@ -132,6 +132,8 @@ export async function runCommand(
 		eventEmitter,
 		rpcServer,
 		eventConfig,
+		contextPipeline: opts.contextPipeline,
+		contextWindowSize: config.contextWindow,
 	};
 
 	return runLoop(client, tools, contextManager, loopOptions);

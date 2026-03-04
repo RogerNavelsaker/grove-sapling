@@ -7,6 +7,7 @@
  * LLM errors use exponential backoff (3 retries).
  */
 
+import { extractTurnHint, SaplingPipelineV1 } from "./context/v1/pipeline.ts";
 import { ClientError } from "./errors.ts";
 import { logger } from "./logging/logger.ts";
 import type {
@@ -171,6 +172,15 @@ export async function runLoop(
 	// Seed the conversation with the task description
 	const messages: LoopMessage[] = [{ role: "user", content: options.task }];
 
+	// v1 pipeline — created once, stateful across turns
+	// Base system prompt is kept immutable; pipeline returns a composed version each turn
+	const pipelineV1 =
+		options.contextPipeline === "v1"
+			? new SaplingPipelineV1({ windowSize: options.contextWindowSize ?? 200_000, verbose: false })
+			: undefined;
+	// Track the pipeline-managed system prompt (updated each turn by the v1 pipeline)
+	let currentSystemPrompt = options.systemPrompt;
+
 	logger.info(`Starting agent loop`, {
 		model: options.model,
 		maxTurns,
@@ -204,7 +214,8 @@ export async function runLoop(
 
 		// ── Step 1: Build LLM request ─────────────────────────────────────────
 		const request: LlmRequest = {
-			systemPrompt: options.systemPrompt,
+			// Use the pipeline-managed system prompt (updated by v1 pipeline each turn)
+			systemPrompt: currentSystemPrompt,
 			messages: messages as Message[],
 			tools: toolDefs,
 			model: options.model,
@@ -258,10 +269,17 @@ export async function runLoop(
 				inputTokens: totalInputTokens,
 				outputTokens: totalOutputTokens,
 			});
-			// Let context manager finalize state
-			contextManager.process(messages as Message[], response.usage, []);
-			const util = contextManager.getUtilization();
-			const contextUtilization = util.total.budget > 0 ? util.total.used / util.total.budget : 0;
+			// Let context manager / pipeline finalize state
+			let contextUtilization = 0;
+			if (pipelineV1) {
+				// v1: no further pipeline processing needed at task_complete; use last state
+				const state = pipelineV1.getState();
+				contextUtilization = state?.utilization ?? 0;
+			} else {
+				contextManager.process(messages as Message[], response.usage, []);
+				const util = contextManager.getUtilization();
+				contextUtilization = util.total.budget > 0 ? util.total.used / util.total.budget : 0;
+			}
 			options.eventEmitter?.emit({
 				type: "turn_end",
 				turn: totalTurns,
@@ -408,16 +426,42 @@ export async function runLoop(
 			}
 		}
 
-		// ── Step 8: Run context manager ───────────────────────────────────────
-		const currentFiles = extractCurrentFiles(messages);
-		const managed = contextManager.process(messages as Message[], response.usage, currentFiles);
-		// Replace the message array in-place with the managed version
-		messages.splice(0, messages.length, ...(managed as LoopMessage[]));
+		// ── Step 8: Run context manager / v1 pipeline ────────────────────────
+		let contextUtilization = 0;
+
+		if (pipelineV1) {
+			// v1: extract turn hint, run pipeline, update messages and system prompt
+			const turnHint = extractTurnHint(messages as Message[], totalTurns);
+			const pipelineResult = pipelineV1.process({
+				messages: messages as Message[],
+				systemPrompt: options.systemPrompt, // always pass the base prompt
+				turnHint,
+				usage: response.usage,
+			});
+			messages.splice(0, messages.length, ...(pipelineResult.messages as LoopMessage[]));
+			currentSystemPrompt = pipelineResult.systemPrompt;
+			contextUtilization = pipelineResult.state.utilization;
+
+			// Update RPC server with pipeline state for getState responses
+			const rpcState = pipelineV1.getRpcState() ?? undefined;
+			if (options.rpcServer && "setPipelineState" in options.rpcServer) {
+				(options.rpcServer as { setPipelineState: (s: typeof rpcState) => void }).setPipelineState(
+					rpcState,
+				);
+			}
+		} else {
+			// v0: legacy context manager
+			const currentFiles = extractCurrentFiles(messages);
+			const managed = contextManager.process(messages as Message[], response.usage, currentFiles);
+			messages.splice(0, messages.length, ...(managed as LoopMessage[]));
+			const turnUtil = contextManager.getUtilization();
+			contextUtilization =
+				turnUtil.total.budget > 0 ? turnUtil.total.used / turnUtil.total.budget : 0;
+		}
 
 		options.setState?.({ turn: totalTurns, phase: "idle" });
 
 		// Emit turn_end with cumulative token counts and context utilization ratio
-		const turnUtil = contextManager.getUtilization();
 		options.eventEmitter?.emit({
 			type: "turn_end",
 			turn: totalTurns,
@@ -426,8 +470,7 @@ export async function runLoop(
 			cacheReadTokens: response.usage.cacheReadTokens ?? 0,
 			cacheWriteTokens: response.usage.cacheCreationTokens ?? 0,
 			model: response.model,
-			contextUtilization:
-				turnUtil.total.budget > 0 ? turnUtil.total.used / turnUtil.total.budget : 0,
+			contextUtilization,
 		});
 	}
 

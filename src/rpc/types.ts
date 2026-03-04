@@ -30,7 +30,17 @@ export type RpcAckStatus = "queued" | "accepted" | "rejected";
 
 export type AgentStatus = "idle" | "working" | "error";
 
+/** Pipeline state snapshot included in getState responses when using v1 pipeline. */
+export interface PipelineRpcState {
+	activeOperationId: number | null;
+	operationCount: number;
+	contextUtilization: number;
+	archiveEntryCount: number;
+}
+
 export interface AgentStateSnapshot {
 	status: AgentStatus;
 	currentTool?: string;
+	/** Present when the v1 context pipeline is active. */
+	pipeline?: PipelineRpcState;
 }

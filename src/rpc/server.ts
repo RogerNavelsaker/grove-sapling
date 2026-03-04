@@ -14,7 +14,13 @@
 
 import type { EventEmitter } from "../hooks/events.ts";
 import { RpcChannel } from "./channel.ts";
-import type { AgentStateSnapshot, AgentStatus, FollowUpRequest, SteerRequest } from "./types.ts";
+import type {
+	AgentStateSnapshot,
+	AgentStatus,
+	FollowUpRequest,
+	PipelineRpcState,
+	SteerRequest,
+} from "./types.ts";
 
 /** Writer function type — injected for testability, defaults to process.stdout.write. */
 type LineWriter = (line: string) => void;
@@ -23,6 +29,7 @@ export class RpcServer {
 	private readonly channel: RpcChannel;
 	private agentStatus: AgentStatus = "idle";
 	private agentCurrentTool: string | undefined;
+	private pipelineState: PipelineRpcState | undefined;
 
 	/** Resolves when the input stream is exhausted. Useful in tests. */
 	readonly drained: Promise<void>;
@@ -90,11 +97,19 @@ export class RpcServer {
 		this.agentCurrentTool = undefined;
 	}
 
+	/** Update the v1 pipeline state for inclusion in getState responses. */
+	setPipelineState(state: PipelineRpcState | undefined): void {
+		this.pipelineState = state;
+	}
+
 	/** Return a snapshot of the current agent state. */
 	private getSnapshot(): AgentStateSnapshot {
 		const snap: AgentStateSnapshot = { status: this.agentStatus };
 		if (this.agentCurrentTool !== undefined) {
 			snap.currentTool = this.agentCurrentTool;
+		}
+		if (this.pipelineState !== undefined) {
+			snap.pipeline = this.pipelineState;
 		}
 		return snap;
 	}

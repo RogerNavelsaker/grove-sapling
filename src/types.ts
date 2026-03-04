@@ -98,6 +98,10 @@ export interface LoopOptions {
 	eventConfig?: EventConfig;
 	/** Optional callback invoked at turn boundaries to report loop state for RPC getState. */
 	setState?: (state: { turn: number; phase: "calling_llm" | "executing_tools" | "idle" }) => void;
+	/** Context pipeline version: "v0" (default, legacy) or "v1" (new operation-based pipeline). */
+	contextPipeline?: "v0" | "v1";
+	/** Context window size in tokens (required when contextPipeline is "v1"). */
+	contextWindowSize?: number;
 }
 
 export interface LoopResult {
@@ -149,6 +153,8 @@ export interface RunOptions {
 	json?: boolean;
 	guardsFile?: string;
 	rpcMode?: boolean;
+	/** Context pipeline version: "v0" (default, legacy) or "v1" (new operation-based pipeline). */
+	contextPipeline?: "v0" | "v1";
 }
 
 // ─── Context Types ────────────────────────────────────────────────────────────
