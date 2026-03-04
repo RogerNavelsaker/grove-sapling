@@ -54,6 +54,7 @@ program
 	.option("--cwd <path>", "Working directory", ".")
 	.option("--backend <sdk>", "LLM backend (default: sdk)")
 	.option("--system-prompt-file <path>", "Custom system prompt file")
+	.option("--prompt-file <path>", "Read prompt from a file (alternative to positional argument)")
 	.option("--max-turns <n>", "Max turns (default: 200)")
 	.option("--verbose", "Log context manager decisions")
 	.option("--json", "NDJSON event output on stdout")
@@ -65,6 +66,18 @@ program
 		async (prompt: string | undefined, options: Record<string, string | boolean | undefined>) => {
 			try {
 				const isRpcMode = (options.mode as string | undefined) === "rpc";
+
+				// --prompt-file: read prompt from file if provided and no positional prompt
+				if (!prompt && options.promptFile) {
+					const filePath = options.promptFile as string;
+					const file = Bun.file(filePath);
+					if (!(await file.exists())) {
+						process.stderr.write(`Error: prompt file not found: ${filePath}\n`);
+						process.exitCode = 1;
+						return;
+					}
+					prompt = (await file.text()).trim();
+				}
 
 				// In RPC mode, stdin is the control channel — prompt must be a CLI arg
 				if (!isRpcMode && !prompt && !process.stdin.isTTY) {
