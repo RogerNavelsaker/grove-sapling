@@ -11,7 +11,7 @@ import { registerUpgradeCommand } from "./commands/upgrade.ts";
 import { loadConfig } from "./config.ts";
 import { SaplingError } from "./errors.ts";
 import { jsonOutput, printJson, printJsonError } from "./json.ts";
-import { colors, setColorEnabled } from "./logging/color.ts";
+import { brand, colors, setColorEnabled } from "./logging/color.ts";
 import { configure, logger } from "./logging/logger.ts";
 import { appendSessionRecord, summarizePrompt } from "./session.ts";
 import type { LlmBackend, RunOptions } from "./types.ts";
@@ -43,8 +43,8 @@ program
 	.description("Headless coding agent with proactive context management")
 	.version(VERSION)
 	.addHelpText("beforeAll", () => {
-		// Branded header: tool name bold+cyan, version dim, tagline default (sapling-46a7)
-		return `${colors.bold(colors.cyan("sapling"))} ${colors.dim(`v${VERSION}`)}\nHeadless coding agent with proactive context management\n`;
+		// Branded header: tool name in brand color + bold, version dim, tagline default
+		return `${brand.bold("sapling")} ${colors.dim(`v${VERSION}`)}\nHeadless coding agent with proactive context management\n`;
 	});
 
 program
