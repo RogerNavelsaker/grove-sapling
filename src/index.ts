@@ -4,6 +4,7 @@ import { runCommand } from "./cli.ts";
 import { registerAuthCommand } from "./commands/auth.ts";
 import { registerCompletionsCommand } from "./commands/completions.ts";
 import { registerDoctorCommand } from "./commands/doctor.ts";
+import { registerInitCommand } from "./commands/init.ts";
 import { registerTypoHandler } from "./commands/typo.ts";
 import { registerUpgradeCommand } from "./commands/upgrade.ts";
 import { loadConfig } from "./config.ts";
@@ -187,6 +188,7 @@ program
 program.showSuggestionAfterError(false);
 registerAuthCommand(program);
 registerCompletionsCommand(program);
+registerInitCommand(program);
 registerUpgradeCommand(program);
 registerDoctorCommand(program);
 registerTypoHandler(program);
