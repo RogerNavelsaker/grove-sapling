@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_CONFIG, loadConfig, loadGuardConfig, validateConfig } from "./config.ts";
+import {
+	DEFAULT_CONFIG,
+	loadConfig,
+	loadGuardConfig,
+	resolveModelAlias,
+	validateConfig,
+} from "./config.ts";
 import { ConfigError } from "./errors.ts";
 
 describe("validateConfig", () => {
@@ -191,19 +197,12 @@ describe("loadConfig backend defaults", () => {
 
 	beforeEach(() => {
 		savedEnv = {
-			CLAUDECODE: process.env.CLAUDECODE,
 			SAPLING_BACKEND: process.env.SAPLING_BACKEND,
 		};
-		delete process.env.CLAUDECODE;
 		delete process.env.SAPLING_BACKEND;
 	});
 
 	afterEach(() => {
-		if (savedEnv.CLAUDECODE === undefined) {
-			delete process.env.CLAUDECODE;
-		} else {
-			process.env.CLAUDECODE = savedEnv.CLAUDECODE;
-		}
 		if (savedEnv.SAPLING_BACKEND === undefined) {
 			delete process.env.SAPLING_BACKEND;
 		} else {
@@ -216,15 +215,60 @@ describe("loadConfig backend defaults", () => {
 		expect(config.backend).toBe("sdk");
 	});
 
-	it("defaults to sdk even when CLAUDECODE is set", () => {
-		process.env.CLAUDECODE = "1";
-		const config = loadConfig();
-		expect(config.backend).toBe("sdk");
-	});
-
 	it("respects explicit SAPLING_BACKEND=cc override", () => {
 		process.env.SAPLING_BACKEND = "cc";
 		const config = loadConfig();
 		expect(config.backend).toBe("cc");
+	});
+});
+
+describe("resolveModelAlias", () => {
+	const ALIAS_KEYS = [
+		"ANTHROPIC_DEFAULT_SONNET_MODEL",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL",
+	] as const;
+	let savedEnv: Record<string, string | undefined>;
+
+	beforeEach(() => {
+		savedEnv = {};
+		for (const key of ALIAS_KEYS) {
+			savedEnv[key] = process.env[key];
+			delete process.env[key];
+		}
+	});
+
+	afterEach(() => {
+		for (const key of ALIAS_KEYS) {
+			if (savedEnv[key] === undefined) {
+				delete process.env[key];
+			} else {
+				process.env[key] = savedEnv[key];
+			}
+		}
+	});
+
+	it("resolves 'sonnet' alias via ANTHROPIC_DEFAULT_SONNET_MODEL", () => {
+		process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = "claude-sonnet-4-6-20251201";
+		expect(resolveModelAlias("sonnet")).toBe("claude-sonnet-4-6-20251201");
+	});
+
+	it("resolves 'haiku' alias via ANTHROPIC_DEFAULT_HAIKU_MODEL", () => {
+		process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = "claude-haiku-4-5-20251001";
+		expect(resolveModelAlias("haiku")).toBe("claude-haiku-4-5-20251001");
+	});
+
+	it("leaves full model name unchanged when no matching env var", () => {
+		expect(resolveModelAlias("claude-sonnet-4-6")).toBe("claude-sonnet-4-6");
+	});
+
+	it("returns original alias when no env var is set", () => {
+		expect(resolveModelAlias("sonnet")).toBe("sonnet");
+	});
+
+	it("resolves alias in validateConfig via env var", () => {
+		process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = "claude-sonnet-4-6-20251201";
+		const config = validateConfig({ model: "sonnet" });
+		expect(config.model).toBe("claude-sonnet-4-6-20251201");
 	});
 });

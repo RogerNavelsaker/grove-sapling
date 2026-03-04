@@ -35,8 +35,19 @@ export const DEFAULT_CONFIG: SaplingConfig = {
 
 const VALID_BACKENDS: LlmBackend[] = ["cc", "pi", "sdk"];
 
+/**
+ * Resolve a short model alias (e.g. "sonnet", "haiku", "opus") via the
+ * ANTHROPIC_DEFAULT_{ALIAS}_MODEL env var. Full model names are returned unchanged.
+ */
+export function resolveModelAlias(model: string): string {
+	const upper = model.toUpperCase();
+	const envKey = `ANTHROPIC_DEFAULT_${upper}_MODEL`;
+	return process.env[envKey] ?? model;
+}
+
 export function validateConfig(config: Partial<SaplingConfig>): SaplingConfig {
 	const merged: SaplingConfig = { ...DEFAULT_CONFIG, ...config };
+	merged.model = resolveModelAlias(merged.model);
 
 	if (Number.isNaN(merged.maxTurns) || !Number.isFinite(merged.maxTurns) || merged.maxTurns < 1) {
 		throw new ConfigError(
@@ -123,9 +134,6 @@ export function loadConfig(overrides: Partial<SaplingConfig> = {}): SaplingConfi
 	if (envBackend && VALID_BACKENDS.includes(envBackend as LlmBackend)) {
 		fromEnv.backend = envBackend as LlmBackend;
 	}
-
-	// CLAUDECODE env var no longer overrides backend — SDK is already the default.
-	// Users who explicitly set SAPLING_BACKEND=cc/pi will get a deprecation warning.
 
 	const envMaxTurns = process.env.SAPLING_MAX_TURNS;
 	if (envMaxTurns) {
