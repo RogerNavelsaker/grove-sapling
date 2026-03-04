@@ -178,7 +178,7 @@ export async function runLoop(
 	});
 
 	options.eventEmitter?.emit({
-		type: "started",
+		type: "ready",
 		model: options.model,
 		maxTurns,
 		tools: toolDefs.map((t) => t.name),
@@ -189,8 +189,9 @@ export async function runLoop(
 		if (options.rpcServer?.isAbortRequested()) {
 			logger.info("Agent loop aborted by RPC request");
 			options.eventEmitter?.emit({
-				type: "run_complete",
-				exitReason: "aborted",
+				type: "result",
+				outcome: "error",
+				summary: "aborted",
 				totalTurns,
 				totalInputTokens,
 				totalOutputTokens,
@@ -216,10 +217,13 @@ export async function runLoop(
 			response = await callWithRetry(client, request);
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
+			const code = err instanceof ClientError ? err.code : "UNKNOWN";
 			logger.error(`Agent loop aborted: ${message}`);
+			options.eventEmitter?.emit({ type: "error", message, classification: code });
 			options.eventEmitter?.emit({
-				type: "run_complete",
-				exitReason: "error",
+				type: "result",
+				outcome: "error",
+				summary: message,
 				totalTurns,
 				totalInputTokens,
 				totalOutputTokens,
@@ -263,11 +267,15 @@ export async function runLoop(
 				turn: totalTurns,
 				inputTokens: totalInputTokens,
 				outputTokens: totalOutputTokens,
+				cacheReadTokens: response.usage.cacheReadTokens ?? 0,
+				cacheWriteTokens: response.usage.cacheCreationTokens ?? 0,
+				model: response.model,
 				contextUtilization,
 			});
 			options.eventEmitter?.emit({
-				type: "run_complete",
-				exitReason: "task_complete",
+				type: "result",
+				outcome: "success",
+				summary: finalText || "",
 				totalTurns,
 				totalInputTokens,
 				totalOutputTokens,
@@ -294,13 +302,16 @@ export async function runLoop(
 
 		const toolResultBlocks: ToolResultBlock[] = await Promise.all(
 			toolCalls.map(async (call): Promise<ToolResultBlock> => {
-				// Emit tool_call event before dispatching
+				const argsSummary = JSON.stringify(call.input).slice(0, 200);
+				// Emit tool_start event before dispatching
 				options.eventEmitter?.emit({
-					type: "tool_call",
+					type: "tool_start",
 					turn: totalTurns,
 					toolName: call.name,
 					toolCallId: call.id,
+					argsSummary,
 				});
+				const toolStartTime = Date.now();
 
 				let toolResult: ToolResultBlock;
 				const tool = tools.get(call.name);
@@ -352,13 +363,14 @@ export async function runLoop(
 					}
 				}
 
-				// Emit tool_result event after completion
+				// Emit tool_end event after completion
 				options.eventEmitter?.emit({
-					type: "tool_result",
+					type: "tool_end",
 					turn: totalTurns,
 					toolName: call.name,
 					toolCallId: call.id,
-					isError: toolResult.is_error ?? false,
+					success: !(toolResult.is_error ?? false),
+					durationMs: Date.now() - toolStartTime,
 				});
 
 				return toolResult;
@@ -403,6 +415,9 @@ export async function runLoop(
 			turn: totalTurns,
 			inputTokens: totalInputTokens,
 			outputTokens: totalOutputTokens,
+			cacheReadTokens: response.usage.cacheReadTokens ?? 0,
+			cacheWriteTokens: response.usage.cacheCreationTokens ?? 0,
+			model: response.model,
 			contextUtilization:
 				turnUtil.total.budget > 0 ? turnUtil.total.used / turnUtil.total.budget : 0,
 		});
@@ -414,8 +429,9 @@ export async function runLoop(
 		outputTokens: totalOutputTokens,
 	});
 	options.eventEmitter?.emit({
-		type: "run_complete",
-		exitReason: "max_turns",
+		type: "result",
+		outcome: "max_turns",
+		summary: `max turns reached (${maxTurns})`,
 		totalTurns,
 		totalInputTokens,
 		totalOutputTokens,

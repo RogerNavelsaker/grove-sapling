@@ -35,18 +35,19 @@ describe("EventEmitter", () => {
 	describe("when disabled", () => {
 		it("emit() is a no-op", () => {
 			const emitter = new EventEmitter(false);
-			emitter.emit({ type: "started", model: "claude" });
+			emitter.emit({ type: "ready", model: "claude" });
 			expect(writeSpy).not.toHaveBeenCalled();
 		});
 
 		it("all convenience methods are no-ops", () => {
 			const emitter = new EventEmitter(false);
-			emitter.started("model", 200, ["bash"]);
+			emitter.ready("model", 200, ["bash"]);
 			emitter.turnStart(1);
-			emitter.toolCall(1, "bash", "t1");
-			emitter.toolResult(1, "bash", "t1", false);
-			emitter.turnEnd(1, 100, 50, 0.5);
-			emitter.runComplete("task_complete", 1, 100, 50);
+			emitter.toolStart(1, "bash", "t1", "{}");
+			emitter.toolEnd(1, "bash", "t1", true, 42);
+			emitter.turnEnd(1, 100, 50, 0, 0, "claude", 0.5);
+			emitter.result("success", "done", 1, 100, 50);
+			emitter.error("boom", "TRANSIENT");
 			expect(writeSpy).not.toHaveBeenCalled();
 		});
 
@@ -93,11 +94,11 @@ describe("EventEmitter", () => {
 
 		// ── Convenience methods ────────────────────────────────────────────────
 
-		it("started() emits correct shape", () => {
+		it("ready() emits correct shape", () => {
 			const emitter = new EventEmitter(true);
-			emitter.started("claude-sonnet", 200, ["bash", "read"]);
+			emitter.ready("claude-sonnet", 200, ["bash", "read"]);
 			const parsed = parseFirstEvent(writeSpy);
-			expect(parsed.type).toBe("started");
+			expect(parsed.type).toBe("ready");
 			expect(parsed.model).toBe("claude-sonnet");
 			expect(parsed.maxTurns).toBe(200);
 			expect(parsed.tools).toEqual(["bash", "read"]);
@@ -111,52 +112,86 @@ describe("EventEmitter", () => {
 			expect(parsed.turn).toBe(3);
 		});
 
-		it("toolCall() emits correct shape", () => {
+		it("toolStart() emits correct shape", () => {
 			const emitter = new EventEmitter(true);
-			emitter.toolCall(2, "bash", "call-abc-123");
+			emitter.toolStart(2, "bash", "call-abc-123", '{"cmd":"ls"}');
 			const parsed = parseFirstEvent(writeSpy);
-			expect(parsed.type).toBe("tool_call");
+			expect(parsed.type).toBe("tool_start");
 			expect(parsed.turn).toBe(2);
 			expect(parsed.toolName).toBe("bash");
 			expect(parsed.toolCallId).toBe("call-abc-123");
+			expect(parsed.argsSummary).toBe('{"cmd":"ls"}');
 		});
 
-		it("toolResult() emits correct shape with isError=false", () => {
+		it("toolEnd() emits correct shape with success=true", () => {
 			const emitter = new EventEmitter(true);
-			emitter.toolResult(2, "bash", "call-abc-123", false);
+			emitter.toolEnd(2, "bash", "call-abc-123", true, 123);
 			const parsed = parseFirstEvent(writeSpy);
-			expect(parsed.type).toBe("tool_result");
+			expect(parsed.type).toBe("tool_end");
 			expect(parsed.toolName).toBe("bash");
 			expect(parsed.toolCallId).toBe("call-abc-123");
-			expect(parsed.isError).toBe(false);
+			expect(parsed.success).toBe(true);
+			expect(parsed.durationMs).toBe(123);
 		});
 
-		it("toolResult() emits isError=true on error", () => {
+		it("toolEnd() emits success=false on error", () => {
 			const emitter = new EventEmitter(true);
-			emitter.toolResult(1, "write", "call-xyz", true);
-			expect(parseFirstEvent(writeSpy).isError).toBe(true);
+			emitter.toolEnd(1, "write", "call-xyz", false, 5);
+			const parsed = parseFirstEvent(writeSpy);
+			expect(parsed.success).toBe(false);
+			expect(parsed.durationMs).toBe(5);
 		});
 
-		it("turnEnd() emits correct shape with contextUtilization ratio", () => {
+		it("turnEnd() emits correct shape with all token fields and model", () => {
 			const emitter = new EventEmitter(true);
-			emitter.turnEnd(2, 500, 100, 0.45);
+			emitter.turnEnd(2, 500, 100, 20, 10, "claude-sonnet-4-6", 0.45);
 			const parsed = parseFirstEvent(writeSpy);
 			expect(parsed.type).toBe("turn_end");
 			expect(parsed.turn).toBe(2);
 			expect(parsed.inputTokens).toBe(500);
 			expect(parsed.outputTokens).toBe(100);
+			expect(parsed.cacheReadTokens).toBe(20);
+			expect(parsed.cacheWriteTokens).toBe(10);
+			expect(parsed.model).toBe("claude-sonnet-4-6");
 			expect(parsed.contextUtilization).toBe(0.45);
 		});
 
-		it("runComplete() emits correct shape", () => {
+		it("result() emits correct shape for success outcome", () => {
 			const emitter = new EventEmitter(true);
-			emitter.runComplete("task_complete", 5, 1000, 400);
+			emitter.result("success", "Task completed.", 5, 1000, 400);
 			const parsed = parseFirstEvent(writeSpy);
-			expect(parsed.type).toBe("run_complete");
-			expect(parsed.exitReason).toBe("task_complete");
+			expect(parsed.type).toBe("result");
+			expect(parsed.outcome).toBe("success");
+			expect(parsed.summary).toBe("Task completed.");
 			expect(parsed.totalTurns).toBe(5);
 			expect(parsed.totalInputTokens).toBe(1000);
 			expect(parsed.totalOutputTokens).toBe(400);
+		});
+
+		it("result() emits correct shape for max_turns outcome", () => {
+			const emitter = new EventEmitter(true);
+			emitter.result("max_turns", "max turns reached", 10, 2000, 800);
+			const parsed = parseFirstEvent(writeSpy);
+			expect(parsed.type).toBe("result");
+			expect(parsed.outcome).toBe("max_turns");
+		});
+
+		it("result() emits correct shape for error outcome", () => {
+			const emitter = new EventEmitter(true);
+			emitter.result("error", "API error", 1, 50, 0);
+			const parsed = parseFirstEvent(writeSpy);
+			expect(parsed.type).toBe("result");
+			expect(parsed.outcome).toBe("error");
+			expect(parsed.summary).toBe("API error");
+		});
+
+		it("error() emits correct shape", () => {
+			const emitter = new EventEmitter(true);
+			emitter.error("Authentication failed", "AUTH_FAILED");
+			const parsed = parseFirstEvent(writeSpy);
+			expect(parsed.type).toBe("error");
+			expect(parsed.message).toBe("Authentication failed");
+			expect(parsed.classification).toBe("AUTH_FAILED");
 		});
 
 		it("multiple emits produce separate newline-terminated lines", () => {

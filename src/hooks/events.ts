@@ -4,6 +4,15 @@
  * Emits structured per-turn events to process.stdout when enabled.
  * Each event is a single JSON line (NDJSON format) with a timestamp field added automatically.
  * When disabled (non-json mode), all methods are no-ops.
+ *
+ * Event types (consumed by overstory SaplingRuntime.parseEvents()):
+ *   ready      — once after initialization
+ *   turn_start — at the start of each turn (1-based)
+ *   tool_start — before each tool execution
+ *   tool_end   — after each tool, with duration and success
+ *   turn_end   — after each LLM call, with token counts and model
+ *   result     — when run loop exits, with outcome and summary
+ *   error      — on failures, with message and classification
  */
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -11,9 +20,8 @@
 /**
  * Emits NDJSON per-turn events to process.stdout when enabled.
  *
- * Convenience methods (started, turnStart, etc.) build the correct event shape
- * and delegate to emit(). All events have a `type` discriminator and a
- * `timestamp` ISO 8601 field injected by emit().
+ * Convenience methods build the correct event shape and delegate to emit().
+ * All events have a `type` discriminator and a `timestamp` ISO 8601 field injected by emit().
  */
 export class EventEmitter {
 	readonly enabled: boolean;
@@ -33,8 +41,8 @@ export class EventEmitter {
 	}
 
 	/** Emitted once when the agent loop begins. */
-	started(model: string, maxTurns: number, tools: string[]): void {
-		this.emit({ type: "started", model, maxTurns, tools });
+	ready(model: string, maxTurns: number, tools: string[]): void {
+		this.emit({ type: "ready", model, maxTurns, tools });
 	}
 
 	/** Emitted at the start of each turn (1-based). */
@@ -42,42 +50,68 @@ export class EventEmitter {
 		this.emit({ type: "turn_start", turn });
 	}
 
-	/** Emitted when a tool call is dispatched. */
-	toolCall(turn: number, toolName: string, toolCallId: string): void {
-		this.emit({ type: "tool_call", turn, toolName, toolCallId });
+	/** Emitted before a tool call is dispatched. argsSummary is a truncated JSON of the inputs. */
+	toolStart(turn: number, toolName: string, toolCallId: string, argsSummary: string): void {
+		this.emit({ type: "tool_start", turn, toolName, toolCallId, argsSummary });
 	}
 
-	/** Emitted when a tool call completes. */
-	toolResult(turn: number, toolName: string, toolCallId: string, isError: boolean): void {
-		this.emit({ type: "tool_result", turn, toolName, toolCallId, isError });
+	/** Emitted after a tool call completes. */
+	toolEnd(
+		turn: number,
+		toolName: string,
+		toolCallId: string,
+		success: boolean,
+		durationMs: number,
+	): void {
+		this.emit({ type: "tool_end", turn, toolName, toolCallId, success, durationMs });
 	}
 
 	/**
 	 * Emitted at the end of each turn after context management runs.
+	 * Token counts are cumulative totals; cache counts are from the most recent LLM response.
 	 * @param contextUtilization - Ratio of total context used (0.0–1.0).
 	 */
 	turnEnd(
 		turn: number,
 		inputTokens: number,
 		outputTokens: number,
+		cacheReadTokens: number,
+		cacheWriteTokens: number,
+		model: string,
 		contextUtilization: number,
 	): void {
-		this.emit({ type: "turn_end", turn, inputTokens, outputTokens, contextUtilization });
+		this.emit({
+			type: "turn_end",
+			turn,
+			inputTokens,
+			outputTokens,
+			cacheReadTokens,
+			cacheWriteTokens,
+			model,
+			contextUtilization,
+		});
 	}
 
 	/** Emitted once when the agent loop finishes (all exit paths). */
-	runComplete(
-		exitReason: string,
+	result(
+		outcome: "success" | "max_turns" | "error",
+		summary: string,
 		totalTurns: number,
 		totalInputTokens: number,
 		totalOutputTokens: number,
 	): void {
 		this.emit({
-			type: "run_complete",
-			exitReason,
+			type: "result",
+			outcome,
+			summary,
 			totalTurns,
 			totalInputTokens,
 			totalOutputTokens,
 		});
+	}
+
+	/** Emitted on LLM or unrecoverable errors. */
+	error(message: string, classification: string): void {
+		this.emit({ type: "error", message, classification });
 	}
 }
