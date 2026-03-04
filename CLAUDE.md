@@ -11,7 +11,7 @@ Sapling (`@os-eco/sapling-cli`, CLI: `sp` / `sapling`) is a headless coding agen
 All commands use **Bun** as the runtime. There is no build/compile step — TypeScript runs directly.
 
 ```bash
-bun test                  # Run all 358 tests (27 files, 1081 expect() calls)
+bun test                  # Run all 470 tests (32 files, 1273 expect() calls)
 bun test src/loop.test.ts # Run a single test file
 bun run lint              # Lint (Biome)
 bun run lint:fix          # Lint + auto-fix
@@ -51,6 +51,14 @@ Runs every turn via `SaplingContextManager.process()`:
 ### Benchmarking (`src/bench/`)
 
 Deterministic context pipeline benchmarking: `harness.ts` runs scenarios through the pipeline, `scenarios.ts` defines 14 predefined message sequences covering common agent workloads (SHORT/10 turns, MEDIUM/30 turns, LONG/100 turns).
+
+### Hooks (`src/hooks/`)
+
+Guard system and event emission: `guards.ts` evaluates five guard types (blockedTools, readOnly, pathBoundary, fileScope, blockedBashPatterns) on tool calls. `manager.ts` (`HookManager`) applies pre/post tool call hooks using guard config loaded via `--guards-file`. `events.ts` (`EventEmitter`) emits structured NDJSON per-turn events in `--json` mode.
+
+### RPC (`src/rpc/`)
+
+JSON-RPC stdin control channel for programmatic agent steering (`--mode rpc`). `channel.ts` reads NDJSON lines from stdin and dispatches to `server.ts`. Three methods: `steer` (inject context), `followUp` (queue task), `abort` (stop loop). Types in `types.ts`.
 
 ### Logging (`src/logging/`)
 

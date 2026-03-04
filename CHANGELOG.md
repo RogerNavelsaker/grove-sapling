@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-03-03
+
+### Added
+
+#### Guard System (Hooks)
+- New `src/hooks/` module with pre/post tool call guard system
+- `HookManager` (`src/hooks/manager.ts`) evaluates guard rules before and after tool execution
+- Five guard evaluators (`src/hooks/guards.ts`): `blockedTools`, `readOnly`, `pathBoundary`, `fileScope`, `blockedBashPatterns`
+- Rules support `block`, `warn`, and `allow` actions with tool-specific or wildcard matching
+- `--guards-file <path>` CLI option to load guard configuration from a JSON file
+- `GuardConfig` type added to `src/types.ts` with `IHookManager` interface
+
+#### NDJSON Event Emission
+- New `EventEmitter` class (`src/hooks/events.ts`) for structured per-turn NDJSON events in `--json` mode
+- Events emitted: `started`, `turnStart`, `turnEnd`, `toolCall`, `toolResult`, `completed`
+- All events include ISO 8601 `timestamp` field; no-op when `--json` is not enabled
+
+#### JSON-RPC Control Channel
+- New `--mode rpc` flag enables a JSON-RPC stdin control channel for programmatic agent steering
+- Three RPC methods: `steer` (inject context), `followUp` (queue follow-up task), `abort` (stop the loop)
+- NDJSON acknowledgment events emitted to stdout for each request
+- New `src/rpc/` module: `channel.ts` (line reader + dispatcher), `server.ts` (request handler), `types.ts`, `index.ts`
+
+#### Testing
+- Guard evaluator tests (`src/hooks/guards.test.ts`) — 324 lines covering all five guard types
+- HookManager tests (`src/hooks/manager.test.ts`) — block/warn/allow rule evaluation
+- EventEmitter tests (`src/hooks/events.test.ts`) — enabled/disabled modes, all event types
+- RPC channel tests (`src/rpc/channel.test.ts`) — line parsing, dispatch, error handling
+- RPC server tests (`src/rpc/server.test.ts`) — steer/followUp/abort request processing
+- CC backend smoke tests exposing tool dispatch failure
+- Additional loop tests for guard integration and event emission
+
+#### CI
+- npm auth configured before version check in publish workflow
+- ripgrep installed in CI workflows for grep tool tests
+
+### Fixed
+- `eventEmitter` field restored in `LoopOptions` alongside flattened `GuardConfig` fields — event emission was broken when guard config was added
+
+### Changed
+- Test suite grown from 358 tests / 27 files / 1081 expects to 470 tests / 32 files / 1273 expects
+
 ## [0.1.3] - 2026-03-03
 
 ### Added
@@ -195,7 +237,8 @@ Initial release of Sapling — a headless coding agent with proactive context ma
 - Real temp directory helpers (`src/test-helpers.ts`)
 - Full coverage of: agent loop, context pipeline (all 5 stages), both LLM clients, all 6 tools, config validation, error hierarchy
 
-[Unreleased]: https://github.com/jayminwest/sapling/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/jayminwest/sapling/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/jayminwest/sapling/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/jayminwest/sapling/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/jayminwest/sapling/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/jayminwest/sapling/compare/v0.1.0...v0.1.1

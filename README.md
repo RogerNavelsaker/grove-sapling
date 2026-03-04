@@ -47,6 +47,8 @@ sapling run <prompt>            Execute a task
   --verbose                       Log context manager decisions
   --json                          NDJSON event output on stdout
   --timing                        Show elapsed time on stderr
+  --guards-file <path>            Path to guards config JSON file
+  --mode <rpc>                    Execution mode: one-shot (default) or rpc
   --quiet, -q                     Suppress non-essential output
 
 sapling version                 Print version
@@ -116,6 +118,15 @@ sapling/
       prune.ts            Message truncation + summarization strategies
       archive.ts          Rolling work summary + file modification tracking
       reshape.ts          Message array reconstruction
+    hooks/
+      guards.ts           Guard evaluators (blockedTools, readOnly, pathBoundary, fileScope, blockedBashPatterns)
+      manager.ts          HookManager — pre/post tool call guard hooks
+      events.ts           NDJSON per-turn event emitter for --json mode
+    rpc/
+      channel.ts          JSON-RPC stdin line reader + dispatcher
+      server.ts           RPC request handler (steer, followUp, abort)
+      types.ts            RPC type definitions
+      index.ts            Barrel export
     logging/              Structured JSON logging + color control
     bench/
       harness.ts          Deterministic context pipeline benchmarking
@@ -164,7 +175,7 @@ Sapling is part of the [os-eco](https://github.com/jayminwest/os-eco) AI agent t
 git clone https://github.com/jayminwest/sapling.git
 cd sapling
 bun install
-bun test                  # 358 tests across 27 files (1081 expect() calls)
+bun test                  # 470 tests across 32 files (1273 expect() calls)
 bun run lint              # Biome linting
 bun run typecheck         # TypeScript strict check
 ```
