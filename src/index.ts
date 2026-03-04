@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
 import { runCommand } from "./cli.ts";
+import { registerAuthCommand } from "./commands/auth.ts";
 import { registerCompletionsCommand } from "./commands/completions.ts";
 import { registerDoctorCommand } from "./commands/doctor.ts";
 import { registerTypoHandler } from "./commands/typo.ts";
@@ -179,6 +180,7 @@ program
 	});
 
 program.showSuggestionAfterError(false);
+registerAuthCommand(program);
 registerCompletionsCommand(program);
 registerUpgradeCommand(program);
 registerDoctorCommand(program);

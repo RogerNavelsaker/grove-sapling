@@ -7,6 +7,7 @@ import type { Command } from "commander";
 import { loadConfig } from "../config.ts";
 import { printJson } from "../json.ts";
 import { colors } from "../logging/color.ts";
+import { readAuthStore } from "./auth.ts";
 import { compareSemver, getCurrentVersion, getLatestVersion } from "./version.ts";
 
 interface DoctorCheck {
@@ -37,6 +38,27 @@ function checkBackendCc(): DoctorCheck {
 		name: "backend-cc",
 		status: "warn",
 		message: "'claude' CLI not found on PATH — cc backend unavailable",
+	};
+}
+
+async function checkAuth(): Promise<DoctorCheck> {
+	const envKey = process.env.ANTHROPIC_API_KEY;
+	if (envKey) {
+		return {
+			name: "auth",
+			status: "pass",
+			message: "API key configured via ANTHROPIC_API_KEY env var",
+		};
+	}
+	const store = await readAuthStore();
+	if (store.providers.anthropic?.apiKey) {
+		return { name: "auth", status: "pass", message: "API key configured via ~/.sapling/auth.json" };
+	}
+	return {
+		name: "auth",
+		status: "warn",
+		message:
+			"No API key configured. Run 'sp auth set anthropic --key <key>' or set ANTHROPIC_API_KEY",
 	};
 }
 
@@ -93,11 +115,16 @@ export function registerDoctorCommand(program: Command): void {
 		.option("--fix", "Attempt to auto-fix issues")
 		.option("--json", "Output as JSON")
 		.option("--verbose", "Show all checks including passing ones")
-		.action((opts: { fix?: boolean; json?: boolean; verbose?: boolean }) => {
+		.action(async (opts: { fix?: boolean; json?: boolean; verbose?: boolean }) => {
 			const jsonMode = opts.json ?? false;
 			const verbose = opts.verbose ?? false;
 
-			const checks: DoctorCheck[] = [checkConfig(), checkBackendCc(), checkVersion()];
+			const checks: DoctorCheck[] = [
+				checkConfig(),
+				checkBackendCc(),
+				await checkAuth(),
+				checkVersion(),
+			];
 
 			const hasFailures = checks.some((c) => c.status === "fail");
 

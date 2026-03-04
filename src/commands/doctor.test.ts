@@ -26,6 +26,7 @@ describe("doctor command", () => {
 		const names = checks.map((c) => c.name);
 		expect(names).toContain("config");
 		expect(names).toContain("backend-cc");
+		expect(names).toContain("auth");
 		expect(names).toContain("version");
 	}, 15000);
 
