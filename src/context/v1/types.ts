@@ -12,6 +12,7 @@ export type {
 	ContentBlock,
 	Message,
 	TokenUsage,
+	ToolPipelineMetadata,
 	ToolResultBlock,
 } from "../../types.ts";
 

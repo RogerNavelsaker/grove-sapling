@@ -9,8 +9,15 @@
  * See docs/context-pipeline-v1.md section 4.1.
  */
 
-import type { Message } from "../../types.ts";
-import type { BoundarySignals, Operation, OperationType, Turn, TurnMetadata } from "./types.ts";
+import type { Message, ToolPipelineMetadata } from "../../types.ts";
+import type {
+	BoundarySignals,
+	Operation,
+	OperationType,
+	ToolPhase,
+	Turn,
+	TurnMetadata,
+} from "./types.ts";
 import {
 	BOUNDARY_THRESHOLD,
 	BOUNDARY_WEIGHTS,
@@ -182,12 +189,29 @@ export function extractTurns(messages: Message[]): Turn[] {
 // ---------------------------------------------------------------------------
 
 /**
+ * Resolve the pipeline phase for a tool.
+ * Checks tool metadata first; falls back to the TOOL_PHASES constant.
+ * Returns undefined for tools with no phase information.
+ */
+export function resolveToolPhase(
+	toolName: string,
+	toolMetadataMap?: Map<string, ToolPipelineMetadata>,
+): ToolPhase | undefined {
+	const meta = toolMetadataMap?.get(toolName);
+	if (meta?.phase !== undefined) return meta.phase;
+	return TOOL_PHASES[toolName];
+}
+
+/**
  * Categorize a set of tool names into their ToolPhase categories.
  */
-function getPhases(tools: Iterable<string>): Set<string> {
+function getPhases(
+	tools: Iterable<string>,
+	toolMetadataMap?: Map<string, ToolPipelineMetadata>,
+): Set<string> {
 	const phases = new Set<string>();
 	for (const t of tools) {
-		const phase = TOOL_PHASES[t];
+		const phase = resolveToolPhase(t, toolMetadataMap);
 		if (phase !== undefined) phases.add(phase);
 	}
 	return phases;
@@ -196,9 +220,13 @@ function getPhases(tools: Iterable<string>): Set<string> {
 /**
  * Detect tool-type transition: current turn uses phases with no overlap to prev operation's phases.
  */
-export function hasToolTransition(prevTools: Set<string>, currentTools: string[]): boolean {
-	const prevPhases = getPhases(prevTools);
-	const currPhases = getPhases(currentTools);
+export function hasToolTransition(
+	prevTools: Set<string>,
+	currentTools: string[],
+	toolMetadataMap?: Map<string, ToolPipelineMetadata>,
+): boolean {
+	const prevPhases = getPhases(prevTools, toolMetadataMap);
+	const currPhases = getPhases(currentTools, toolMetadataMap);
 	if (prevPhases.size === 0 || currPhases.size === 0) return false;
 	for (const phase of currPhases) {
 		if (prevPhases.has(phase)) return false;
@@ -288,12 +316,11 @@ export function detectBoundary(signals: BoundarySignals): boolean {
 /**
  * Infer operation type based on dominant tool usage.
  */
-export function inferOperationType(tools: Set<string>): OperationType {
-	const phases = new Set<string>();
-	for (const t of tools) {
-		const phase = TOOL_PHASES[t];
-		if (phase !== undefined) phases.add(phase);
-	}
+export function inferOperationType(
+	tools: Set<string>,
+	toolMetadataMap?: Map<string, ToolPipelineMetadata>,
+): OperationType {
+	const phases = getPhases(tools, toolMetadataMap);
 
 	const hasWrite = phases.has("write");
 	const hasVerify = phases.has("verify");

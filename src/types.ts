@@ -200,11 +200,24 @@ export interface ToolResult {
 	};
 }
 
+/**
+ * Optional pipeline metadata a Tool can declare to influence context management.
+ * When present, these values take precedence over the built-in TOOL_PHASES fallback.
+ */
+export interface ToolPipelineMetadata {
+	/** Pipeline phase for boundary detection and operation type inference. */
+	phase?: "read" | "write" | "verify" | "search";
+	/** Keys in tool input that contain file paths. Supplements default extraction keys. */
+	filePathKeys?: string[];
+}
+
 export interface Tool {
 	name: string;
 	description: string;
 	inputSchema: JsonSchema;
 	dryRun?: boolean;
+	/** Optional pipeline metadata for context management. */
+	pipeline?: ToolPipelineMetadata;
 	execute(input: Record<string, unknown>, cwd: string): Promise<ToolResult>;
 	toDefinition(): ToolDefinition;
 }

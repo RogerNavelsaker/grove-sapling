@@ -3,7 +3,7 @@
  */
 
 import { beforeEach, describe, expect, it } from "bun:test";
-import type { Message } from "../../types.ts";
+import type { Message, ToolPipelineMetadata } from "../../types.ts";
 import {
 	detectBoundary,
 	extractTurns,
@@ -17,6 +17,7 @@ import {
 	ingest,
 	ingestTurn,
 	resetOperationIdCounter,
+	resolveToolPhase,
 } from "./ingest.ts";
 import type { Operation, Turn } from "./types.ts";
 
@@ -802,5 +803,69 @@ describe("ingest", () => {
 		// There should be at least one new turn in the result (the write turn)
 		const totalTurns = r2.operations.reduce((sum, op) => sum + op.turns.length, 0);
 		expect(totalTurns).toBeGreaterThan(r1.operations.reduce((s, op) => s + op.turns.length, 0));
+	});
+});
+
+// ---------------------------------------------------------------------------
+// resolveToolPhase — metadata-first lookup with TOOL_PHASES fallback
+// ---------------------------------------------------------------------------
+
+describe("resolveToolPhase", () => {
+	it("returns metadata phase when available", () => {
+		const meta: ToolPipelineMetadata = { phase: "write" };
+		const map = new Map<string, ToolPipelineMetadata>([["custom-write", meta]]);
+		expect(resolveToolPhase("custom-write", map)).toBe("write");
+	});
+
+	it("falls back to TOOL_PHASES for built-in tools when no metadata map", () => {
+		expect(resolveToolPhase("bash")).toBe("verify");
+		expect(resolveToolPhase("read")).toBe("read");
+		expect(resolveToolPhase("grep")).toBe("search");
+		expect(resolveToolPhase("glob")).toBe("search");
+		expect(resolveToolPhase("write")).toBe("write");
+		expect(resolveToolPhase("edit")).toBe("write");
+	});
+
+	it("falls back to TOOL_PHASES when metadata map exists but tool has no entry", () => {
+		const map = new Map<string, ToolPipelineMetadata>([["other-tool", { phase: "read" }]]);
+		expect(resolveToolPhase("bash", map)).toBe("verify");
+	});
+
+	it("falls back to TOOL_PHASES when metadata entry has no phase", () => {
+		const meta: ToolPipelineMetadata = { filePathKeys: ["src"] };
+		const map = new Map<string, ToolPipelineMetadata>([["bash", meta]]);
+		expect(resolveToolPhase("bash", map)).toBe("verify");
+	});
+
+	it("returns undefined for unknown tool with no metadata", () => {
+		expect(resolveToolPhase("unknown-custom-tool")).toBeUndefined();
+	});
+
+	it("returns undefined for unknown tool even with empty metadata map", () => {
+		const map = new Map<string, ToolPipelineMetadata>();
+		expect(resolveToolPhase("unknown-custom-tool", map)).toBeUndefined();
+	});
+});
+
+describe("hasToolTransition — metadata-based phase lookup", () => {
+	it("detects transition using custom tool metadata phase", () => {
+		// custom-reader has phase "read", custom-writer has phase "write"
+		const metaMap = new Map<string, ToolPipelineMetadata>([
+			["custom-reader", { phase: "read" }],
+			["custom-writer", { phase: "write" }],
+		]);
+		const prevTools = new Set(["custom-reader"]);
+		const currTools = ["custom-writer"];
+		expect(hasToolTransition(prevTools, currTools, metaMap)).toBe(true);
+	});
+
+	it("no transition when custom tools share same phase", () => {
+		const metaMap = new Map<string, ToolPipelineMetadata>([
+			["custom-grep", { phase: "search" }],
+			["custom-glob", { phase: "search" }],
+		]);
+		const prevTools = new Set(["custom-grep"]);
+		const currTools = ["custom-glob"];
+		expect(hasToolTransition(prevTools, currTools, metaMap)).toBe(false);
 	});
 });
