@@ -7,6 +7,8 @@
 
 import {
 	EVAL_WEIGHTS,
+	type EvalSignal,
+	type EvalSignalContext,
 	type Operation,
 	type OperationType,
 	RECENCY_HALF_LIFE_OPS,
@@ -100,6 +102,54 @@ export function operationTypeScore(type: OperationType): number {
 }
 
 // ---------------------------------------------------------------------------
+// Signal registry
+// ---------------------------------------------------------------------------
+
+/**
+ * The default set of scoring signals used by the evaluate stage.
+ * Weights are taken from EVAL_WEIGHTS and sum to 1.0, so normalization is a no-op
+ * for the built-in registry. Custom registries may use arbitrary relative weights.
+ */
+export const DEFAULT_SIGNALS: EvalSignal[] = [
+	{
+		name: "recency",
+		weight: EVAL_WEIGHTS.recency,
+		scoreFn: ({ opsAgo }: EvalSignalContext) => recencyScore(opsAgo),
+	},
+	{
+		name: "fileOverlap",
+		weight: EVAL_WEIGHTS.fileOverlap,
+		scoreFn: ({ op, activeFiles }: EvalSignalContext) => fileOverlapScore(op.files, activeFiles),
+	},
+	{
+		name: "causalDependency",
+		weight: EVAL_WEIGHTS.causalDependency,
+		scoreFn: ({ op, activeOp }: EvalSignalContext) =>
+			activeOp !== null ? causalDependencyScore(op, activeOp) : 0,
+	},
+	{
+		name: "outcomeSignificance",
+		weight: EVAL_WEIGHTS.outcomeSignificance,
+		scoreFn: ({ op }: EvalSignalContext) => outcomeSignificanceScore(op),
+	},
+	{
+		name: "operationType",
+		weight: EVAL_WEIGHTS.operationType,
+		scoreFn: ({ op }: EvalSignalContext) => operationTypeScore(op.type),
+	},
+];
+
+/**
+ * Compute per-signal normalized weights so they sum to 1.0 regardless of the
+ * raw weight values supplied in the registry.
+ */
+function normalizeWeights(signals: EvalSignal[]): number[] {
+	const total = signals.reduce((sum, s) => sum + s.weight, 0);
+	const divisor = total > 0 ? total : 1;
+	return signals.map((s) => s.weight / divisor);
+}
+
+// ---------------------------------------------------------------------------
 // Per-operation evaluation
 // ---------------------------------------------------------------------------
 
@@ -109,23 +159,25 @@ export function operationTypeScore(type: OperationType): number {
  * @param op        - The operation being scored.
  * @param activeOp  - The currently active operation (null when there is none).
  * @param totalOps  - Total number of operations in the registry (including active).
+ * @param signals   - Signal registry to use (defaults to DEFAULT_SIGNALS).
  */
 export function evaluateOperation(
 	op: Operation,
 	activeOp: Operation | null,
 	totalOps: number,
+	signals: EvalSignal[] = DEFAULT_SIGNALS,
 ): number {
 	// opsAgo = how many operations have run since this one ended.
 	// When op IS the active operation, opsAgo = 0.
 	const opsAgo = activeOp !== null ? totalOps - 1 - op.id : 0;
 	const activeFiles = activeOp?.files ?? new Set<string>();
+	const ctx: EvalSignalContext = { op, activeOp, opsAgo, activeFiles };
 
-	const score =
-		EVAL_WEIGHTS.recency * recencyScore(opsAgo) +
-		EVAL_WEIGHTS.fileOverlap * fileOverlapScore(op.files, activeFiles) +
-		EVAL_WEIGHTS.causalDependency * (activeOp !== null ? causalDependencyScore(op, activeOp) : 0) +
-		EVAL_WEIGHTS.outcomeSignificance * outcomeSignificanceScore(op) +
-		EVAL_WEIGHTS.operationType * operationTypeScore(op.type);
+	const weights = normalizeWeights(signals);
+	let score = 0;
+	for (let i = 0; i < signals.length; i++) {
+		score += (weights[i] as number) * (signals[i] as EvalSignal).scoreFn(ctx);
+	}
 
 	return Math.min(1.0, Math.max(0.0, score));
 }
