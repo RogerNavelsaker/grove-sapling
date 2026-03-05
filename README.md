@@ -41,7 +41,7 @@ sp run "Add error handling" --json
 sapling run <prompt>            Execute a task
   --model <name>                  Model to use (default: MiniMax-M2.5)
   --cwd <path>                    Working directory (default: .)
-  --backend <sdk>                 LLM backend (default: sdk)
+  --backend <sdk>                 LLM backend (sdk only)
   --system-prompt-file <path>     Custom system prompt
   --max-turns <n>                 Max turns (default: 200)
   --verbose                       Log context manager decisions
@@ -49,6 +49,9 @@ sapling run <prompt>            Execute a task
   --timing                        Show elapsed time on stderr
   --guards-file <path>            Path to guards config JSON file
   --mode <rpc>                    Execution mode: one-shot (default) or rpc
+  --dry-run                        Show what tools would do without executing
+  --prompt-file <path>             Read prompt from file
+  --rpc-socket <path>              Unix socket path for external getState queries
   --quiet, -q                     Suppress non-essential output
 
 sapling auth set <provider>     Store API key for a provider (anthropic, minimax)
@@ -132,8 +135,9 @@ sapling/
         compact.ts        Summarize low-scoring turns, truncate large outputs
         budget.ts         Token allocation across system/archive/history/current
         render.ts         Assemble final messages with archive + system prompt
+        registry.ts       Composable stage registry (register, replace, remove stages)
         templates.ts      Template-based archive rendering
-        types.ts          v1 type definitions (Turn, TurnMetadata, PipelineState)
+        types.ts          v1 type definitions (Turn, TurnMetadata, PipelineState, EvalSignal, StageRegistry)
     hooks/
       guards.ts           Guard evaluators (blockedTools, readOnly, pathBoundary, fileScope, blockedBashPatterns)
       manager.ts          HookManager — pre/post tool call guard hooks
@@ -141,6 +145,7 @@ sapling/
     rpc/
       channel.ts          JSON-RPC stdin line reader + dispatcher
       server.ts           RPC request handler (steer, followUp, abort)
+      socket.ts           Unix domain socket server for external getState queries
       types.ts            RPC type definitions
       index.ts            Barrel export
     logging/              Structured JSON logging + color control
@@ -182,7 +187,7 @@ Sapling is part of the [os-eco](https://github.com/jayminwest/os-eco) AI agent t
 git clone https://github.com/jayminwest/sapling.git
 cd sapling
 bun install
-bun test                  # 690 tests across 36 files (2619 expect() calls)
+bun test                  # 792 tests across 39 files (2451 expect() calls)
 bun run lint              # Biome linting
 bun run typecheck         # TypeScript strict check
 ```

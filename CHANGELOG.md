@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-03-04
+
+### Added
+
+#### Context Pipeline Enhancements
+- `StageRegistry` (`src/context/v1/registry.ts`) — composable pipeline with register, replace, and remove stage operations; default stages: ingest → evaluate → compact → budget → render
+- `EvalSignal` interface and signal registry in evaluate stage for extensible scoring signals
+- Operation `dependsOn` tracking via artifact overlap and error chain in ingest stage
+- Commitment tracking in ingest stage — extracts pending commitments (promises, plans, next steps) from assistant messages
+- Pending commitments surfaced in compact summaries and system prompt rendering
+- Dynamic zone rebalancing in budget stage — redistributes unused tokens across zones instead of wasting them
+- `ToolPipelineMetadata` interface on `Tool` for pipeline-stage extensibility
+
+#### CLI Enhancements
+- `--dry-run` flag on `sp run` — shows what tools would do without executing
+- `--prompt-file <path>` flag on `sp run` — read prompt from file instead of positional argument
+- `dryRun` property added to all six tools (bash, read, write, edit, grep, glob)
+
+#### RPC Enhancements
+- Unix domain socket server (`src/rpc/socket.ts`) — `--rpc-socket <path>` exposes `getState` queries to external tools independently of `--mode rpc`
+- Steer-redirect boundary detection for RPC steers
+
+#### Documentation
+- Archive persistence design documents (`docs/`) for swarm agent restart scenarios
+
+#### Testing
+- E2e guard enforcement chain tests (`src/hooks/e2e.test.ts`)
+- StageRegistry tests (`src/context/v1/registry.test.ts`)
+- Template rendering tests (`src/context/v1/templates.test.ts`)
+- Unix socket server tests (`src/rpc/socket.test.ts`)
+- CLI `--prompt-file` tests (`src/index.test.ts`)
+- Expanded ingest, evaluate, compact, budget, and render tests for new features (commitment tracking, dependsOn, rebalancing)
+
+### Fixed
+- `_nextOperationId` moved from module scope to `SaplingPipelineV1` instance — fixes shared state across concurrent pipeline instances
+- Budget overflow from large failure-output turns now prevented
+
+### Changed
+- **Breaking:** CC and Pi subprocess backends removed — SDK is now the only backend; `--backend cc` and `--backend pi` no longer accepted; `src/client/cc.ts` and `src/client/pi.ts` deleted
+- Default model changed to `MiniMax-M2.5` via MiniMax's Anthropic-compatible API
+- Dead 5-zone `ContextBudget` type removed in favor of v1 budget model
+- `.env.example` removed
+- Test suite: 792 tests across 39 files (2451 expect() calls), up from 690/36/2619
+
 ## [0.3.0] - 2026-03-04
 
 ### Added
@@ -353,7 +397,8 @@ Initial release of Sapling — a headless coding agent with proactive context ma
 - Real temp directory helpers (`src/test-helpers.ts`)
 - Full coverage of: agent loop, context pipeline (all 5 stages), both LLM clients, all 6 tools, config validation, error hierarchy
 
-[Unreleased]: https://github.com/jayminwest/sapling/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/jayminwest/sapling/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/jayminwest/sapling/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/jayminwest/sapling/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/jayminwest/sapling/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/jayminwest/sapling/compare/v0.1.4...v0.1.5

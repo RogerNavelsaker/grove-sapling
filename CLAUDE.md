@@ -11,7 +11,7 @@ Sapling (`@os-eco/sapling-cli`, CLI: `sp` / `sapling`) is a headless coding agen
 All commands use **Bun** as the runtime. There is no build/compile step — TypeScript runs directly.
 
 ```bash
-bun test                  # Run all 690 tests (36 files, 2619 expect() calls)
+bun test                  # Run all 792 tests (39 files, 2451 expect() calls)
 bun test src/loop.test.ts # Run a single test file
 bun run lint              # Lint (Biome)
 bun run lint:fix          # Lint + auto-fix
@@ -34,18 +34,18 @@ Each turn: call LLM → if no tool calls, stop → execute all tool calls in par
 
 ### LLM client (`src/client/`)
 
-**AnthropicClient** (`anthropic.ts`) — calls Anthropic SDK directly; `@anthropic-ai/sdk` is an optional dep, dynamically imported; supports `ANTHROPIC_BASE_URL` and model alias resolution
+**AnthropicClient** (`anthropic.ts`) — calls Anthropic SDK directly; `@anthropic-ai/sdk` is an optional dep, dynamically imported; supports `ANTHROPIC_BASE_URL` and model alias resolution. SDK is the only backend (CC and Pi backends removed).
 
 ### Context pipeline (`src/context/v1/`)
 
 Turn-based pipeline with `SaplingPipelineV1.process()`:
-1. **Ingest** (`ingest.ts`) — parses messages into paired `Turn` objects, extracts metadata (files, errors, decisions, questions)
-2. **Evaluate** (`evaluate.ts`) — scores turns 0–1 using weighted signals (recency, file overlap, error context, decisions, questions, size)
-3. **Compact** (`compact.ts`) — summarizes low-scoring turns, truncates large tool outputs
-4. **Budget** (`budget.ts`) — token allocation and enforcement across system/archive/history/current zones
+1. **Ingest** (`ingest.ts`) — parses messages into paired `Turn` objects, extracts metadata (files, errors, decisions, questions, commitments, dependsOn)
+2. **Evaluate** (`evaluate.ts`) — scores turns 0–1 using weighted signals via `EvalSignal` registry (recency, file overlap, error context, decisions, questions, size)
+3. **Compact** (`compact.ts`) — summarizes low-scoring turns, truncates large tool outputs, surfaces pending commitments
+4. **Budget** (`budget.ts`) — token allocation and enforcement across system/archive/history/current zones with dynamic rebalancing
 5. **Render** (`render.ts`) — assembles final message array with archive and composed system prompt; ensures orphaned tool_use/tool_result pairs are never emitted
 
-Types in `types.ts`, archive templates in `templates.ts`.
+`StageRegistry` (`registry.ts`) — composable pipeline with register/replace/remove stage operations. Types in `types.ts`, archive templates in `templates.ts`.
 
 ### Benchmarking (`src/bench/`)
 
@@ -57,7 +57,7 @@ Guard system and event emission: `guards.ts` evaluates five guard types (blocked
 
 ### RPC (`src/rpc/`)
 
-JSON-RPC stdin control channel for programmatic agent steering (`--mode rpc`). `channel.ts` reads NDJSON lines from stdin and dispatches to `server.ts`. Three methods: `steer` (inject context), `followUp` (queue task), `abort` (stop loop). Types in `types.ts`.
+JSON-RPC stdin control channel for programmatic agent steering (`--mode rpc`). `channel.ts` reads NDJSON lines from stdin and dispatches to `server.ts`. Three methods: `steer` (inject context), `followUp` (queue task), `abort` (stop loop). Types in `types.ts`. `socket.ts` (`RpcSocketServer`) exposes `getState` queries over a Unix domain socket (`--rpc-socket <path>`), independent of `--mode rpc`.
 
 ### Logging (`src/logging/`)
 
