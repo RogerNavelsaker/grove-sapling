@@ -10,6 +10,9 @@
 
 import type { Operation } from "./types.ts";
 
+/** Local extension type until pendingCommitments is merged into the canonical Operation type. */
+type OpWithPending = Operation & { pendingCommitments?: string[] };
+
 // ---------------------------------------------------------------------------
 // Purpose extraction
 // ---------------------------------------------------------------------------
@@ -128,14 +131,22 @@ export function renderCompactSummary(op: Operation): string {
 	const lines: string[] = [`[Op ${op.id}] ${purpose}`];
 	if (actions.length > 0) lines.push(`Actions: ${actions}`);
 	lines.push(`Outcome: ${outcome}`);
+
+	const pending = (op as OpWithPending).pendingCommitments ?? [];
+	if (pending.length > 0) {
+		lines.push(`Pending: ${pending.slice(0, 5).join("; ")}`);
+	}
+
 	return lines.join("\n");
 }
 
 /**
  * Render a one-liner archive entry for the system prompt working memory.
- * Format: "Op{id}: {purpose} [{outcome}]"
+ * Format: "Op{id}: {purpose} [{outcome}]" or "Op{id}: {purpose} [{outcome}] (N pending)"
  */
 export function renderArchiveEntry(op: Operation): string {
 	const purpose = extractPurpose(op);
-	return `Op${op.id}: ${purpose} [${op.outcome}]`;
+	const pendingList = (op as OpWithPending).pendingCommitments ?? [];
+	const pending = pendingList.length > 0 ? ` (${pendingList.length} pending)` : "";
+	return `Op${op.id}: ${purpose} [${op.outcome}]${pending}`;
 }

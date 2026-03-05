@@ -387,6 +387,63 @@ describe("composeSystemPrompt", () => {
 		// archived ops should not appear in active context files
 		expect(result).not.toContain("- src/old.ts");
 	});
+
+	it("includes pending commitments from active op when present", () => {
+		const activeOp = {
+			...makeOperation({ id: 1, status: "active", type: "mutate", outcome: "in_progress" }),
+			pendingCommitments: ["write tests for render.ts", "update types.ts"],
+		};
+		const result = composeSystemPrompt(BASE, [], activeOp, [activeOp]);
+		expect(result).toContain("**Pending commitments:**");
+		expect(result).toContain("- write tests for render.ts");
+		expect(result).toContain("- update types.ts");
+	});
+
+	it("does not include pending commitments section when active op has none", () => {
+		const activeOp = makeOperation({
+			id: 1,
+			status: "active",
+			type: "mutate",
+			outcome: "in_progress",
+		});
+		const result = composeSystemPrompt(BASE, [], activeOp, [activeOp]);
+		expect(result).not.toContain("**Pending commitments:**");
+	});
+
+	it("does not include pending commitments section when there is no active op", () => {
+		const completedOp = {
+			...makeOperation({ id: 1, status: "completed", type: "mutate", artifacts: ["src/foo.ts"] }),
+			pendingCommitments: ["some unfinished task"],
+		};
+		const result = composeSystemPrompt(BASE, [], null, [completedOp]);
+		expect(result).not.toContain("**Pending commitments:**");
+	});
+
+	it("caps pending commitments display at 5 items", () => {
+		const activeOp = {
+			...makeOperation({ id: 1, status: "active", type: "mutate", outcome: "in_progress" }),
+			pendingCommitments: ["t1", "t2", "t3", "t4", "t5", "t6", "t7"],
+		};
+		const result = composeSystemPrompt(BASE, [], activeOp, [activeOp]);
+		expect(result).toContain("- t5");
+		expect(result).not.toContain("- t6");
+		expect(result).not.toContain("- t7");
+	});
+
+	it("includes pending count in working memory archive entries", () => {
+		const archivedOp = {
+			...makeOperation({
+				id: 1,
+				status: "archived",
+				type: "mutate",
+				outcome: "partial",
+				files: new Set(["src/foo.ts"]),
+			}),
+			pendingCommitments: ["task A", "task B", "task C"],
+		};
+		const result = composeSystemPrompt(BASE, [archivedOp], null, [archivedOp]);
+		expect(result).toContain("(3 pending)");
+	});
 });
 
 // ---------------------------------------------------------------------------
