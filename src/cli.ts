@@ -93,6 +93,12 @@ export async function runCommand(
 	const client = createClient(config);
 	const tools = createDefaultRegistry();
 
+	if (opts.dryRun) {
+		for (const tool of tools.list()) {
+			tool.dryRun = true;
+		}
+	}
+
 	const eventEmitter = new EventEmitter(config.json);
 
 	// RPC mode: open stdin as a control channel for mid-task steering.
