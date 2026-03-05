@@ -45,6 +45,8 @@ export interface TurnMetadata {
 	tokens: number;
 	/** Monotonic timestamp (Date.now()) when the turn was ingested. */
 	timestamp: number;
+	/** Future-action promises extracted from the assistant's text (e.g., "I will edit foo.ts"). */
+	commitments?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -83,6 +85,8 @@ export interface Operation {
 	score: number;
 	/** Compact summary (generated when status moves to "compacted"). */
 	summary: string | null;
+	/** Commitments made during this operation that were not fulfilled (computed at finalization). */
+	pendingCommitments?: string[];
 	/** Turn index of the first turn in this operation. */
 	startTurn: number;
 	/** Turn index of the last turn in this operation (updated as turns are added). */

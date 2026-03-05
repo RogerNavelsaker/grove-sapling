@@ -2,11 +2,13 @@
  * Tests for the v1 context pipeline Ingest stage.
  */
 
-import { beforeEach, describe, expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import type { Message, ToolPipelineMetadata } from "../../types.ts";
 import {
 	computeDependsOn,
+	computePendingCommitments,
 	detectBoundary,
+	extractCommitments,
 	extractTurns,
 	hasFileScopeChange,
 	hasIntentSignal,
@@ -17,7 +19,6 @@ import {
 	inferOutcome,
 	ingest,
 	ingestTurn,
-	resetOperationIdCounter,
 	resolveToolPhase,
 } from "./ingest.ts";
 import type { Operation, Turn } from "./types.ts";
@@ -71,6 +72,7 @@ function makeOperation(override: Partial<Operation> = {}): Operation {
 		dependsOn: [],
 		score: 0,
 		summary: null,
+		pendingCommitments: [],
 		startTurn: 0,
 		endTurn: 0,
 		...override,
@@ -81,7 +83,12 @@ function makeTurn(
 	index: number,
 	tools: string[],
 	files: string[],
-	opts: { hasError?: boolean; hasDecision?: boolean; timestamp?: number } = {},
+	opts: {
+		hasError?: boolean;
+		hasDecision?: boolean;
+		timestamp?: number;
+		commitments?: string[];
+	} = {},
 ): Turn {
 	const assistant = makeAssistantMsg(
 		tools.map((t, i) => ({ name: t, path: files[i] ?? undefined })),
@@ -98,6 +105,7 @@ function makeTurn(
 			hasDecision: opts.hasDecision ?? false,
 			tokens: 100,
 			timestamp: opts.timestamp ?? Date.now(),
+			commitments: opts.commitments ?? [],
 		},
 	};
 }
@@ -708,7 +716,7 @@ describe("ingestTurn", () => {
 		const now = Date.now();
 		// Op 1: writes src/foo.ts
 		const t1 = makeTurn(0, ["write"], ["src/foo.ts"], { timestamp: now });
-		const r1 = ingestTurn([], null, t1);
+		const r1 = ingestTurn([], null, t1, 1);
 		r1.operations[0]?.tools.add("write");
 		r1.operations[0]?.files.add("src/foo.ts");
 		// simulate artifact tracking
@@ -719,7 +727,7 @@ describe("ingestTurn", () => {
 		// Simulate: Op2 is verify phase on src/foo.ts (tests)
 		const t2 = makeTurn(1, ["bash"], ["src/foo.ts"], { timestamp: now + 100 });
 
-		const r2 = ingestTurn(r1.operations, r1.activeOperationId, t2);
+		const r2 = ingestTurn(r1.operations, r1.activeOperationId, t2, r1.nextOperationId);
 
 		// Boundary should be detected (write -> verify transition)
 		if (r2.operations.length === 2) {
@@ -732,13 +740,13 @@ describe("ingestTurn", () => {
 		const now = Date.now();
 		// Op 1: bash that fails
 		const t1 = makeTurn(0, ["bash"], [], { hasError: true, timestamp: now });
-		const r1 = ingestTurn([], null, t1);
+		const r1 = ingestTurn([], null, t1, 1);
 		r1.operations[0]?.tools.add("bash");
 
 		// Op 2: write to fix the error — different phase (verify -> write) triggers boundary
 		const t2 = makeTurn(1, ["write"], ["src/fix.ts"], { timestamp: now + 100 });
 
-		const r2 = ingestTurn(r1.operations, r1.activeOperationId, t2);
+		const r2 = ingestTurn(r1.operations, r1.activeOperationId, t2, r1.nextOperationId);
 
 		if (r2.operations.length === 2) {
 			// New op should depend on the failed op
@@ -776,11 +784,11 @@ describe("ingestTurn", () => {
 			},
 		};
 
-		const r1 = ingestTurn([], null, t1);
+		const r1 = ingestTurn([], null, t1, 1);
 		r1.operations[0]?.tools.add("read");
 		r1.operations[0]?.files.add("src/foo.ts");
 
-		const r2 = ingestTurn(r1.operations, r1.activeOperationId, t2);
+		const r2 = ingestTurn(r1.operations, r1.activeOperationId, t2, r1.nextOperationId);
 
 		expect(r2.operations).toHaveLength(2);
 		expect(r2.operations[0]?.status).toBe("completed");
@@ -1000,5 +1008,144 @@ describe("hasToolTransition — metadata-based phase lookup", () => {
 		const prevTools = new Set(["custom-grep"]);
 		const currTools = ["custom-glob"];
 		expect(hasToolTransition(prevTools, currTools, metaMap)).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// extractCommitments
+// ---------------------------------------------------------------------------
+
+describe("extractCommitments", () => {
+	it("extracts commitments from numbered lists with action verbs", () => {
+		const text = "I'll do the following:\n1. Edit src/foo.ts\n2. Edit src/bar.ts\n3. Run tests";
+		const commitments = extractCommitments(text);
+		expect(commitments.some((c) => c.includes("src/foo.ts"))).toBe(true);
+		expect(commitments.some((c) => c.includes("src/bar.ts"))).toBe(true);
+		expect(commitments.some((c) => /run tests/i.test(c))).toBe(true);
+	});
+
+	it("extracts commitments from future-tense phrases", () => {
+		const text = "I'll implement the authentication module and then run the test suite.";
+		const commitments = extractCommitments(text);
+		expect(commitments.length).toBeGreaterThan(0);
+		expect(commitments.some((c) => /implement/i.test(c))).toBe(true);
+	});
+
+	it("extracts commitments from bulleted action lists", () => {
+		const text = "Steps:\n- Edit config.ts\n- Update schema.json";
+		const commitments = extractCommitments(text);
+		expect(commitments.some((c) => c.includes("config.ts"))).toBe(true);
+		expect(commitments.some((c) => c.includes("schema.json"))).toBe(true);
+	});
+
+	it("ignores list items without action verbs or file paths", () => {
+		const text = "1. Something vague\n2. A general concept";
+		const commitments = extractCommitments(text);
+		expect(commitments).toHaveLength(0);
+	});
+
+	it("returns empty array for plain descriptive text", () => {
+		const text = "The system uses a layered architecture with separate concerns.";
+		const commitments = extractCommitments(text);
+		expect(commitments).toHaveLength(0);
+	});
+
+	it("deduplicates repeated commitments", () => {
+		const text = "I'll edit src/foo.ts\n1. Edit src/foo.ts";
+		const commitments = extractCommitments(text);
+		const dedupedCount = new Set(commitments).size;
+		expect(dedupedCount).toBe(commitments.length);
+	});
+
+	it("caps output at 20 items", () => {
+		const items = Array.from({ length: 30 }, (_, i) => `${i + 1}. Edit src/file${i}.ts`).join("\n");
+		const commitments = extractCommitments(items);
+		expect(commitments.length).toBeLessThanOrEqual(20);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// computePendingCommitments
+// ---------------------------------------------------------------------------
+
+describe("computePendingCommitments", () => {
+	it("returns empty array when outcome is success", () => {
+		const turn = makeTurn(0, ["write"], ["src/foo.ts"], {
+			commitments: ["edit src/bar.ts"],
+		});
+		const op = makeOperation({
+			turns: [turn],
+			artifacts: ["src/foo.ts"],
+			outcome: "success",
+		});
+		expect(computePendingCommitments(op)).toEqual([]);
+	});
+
+	it("returns commitments for files not in artifacts when outcome is partial", () => {
+		const turn = makeTurn(0, ["write"], ["src/foo.ts"], {
+			commitments: ["edit src/foo.ts", "edit src/bar.ts"],
+		});
+		const op = makeOperation({
+			turns: [turn],
+			artifacts: ["src/foo.ts"],
+			outcome: "partial",
+		});
+		const pending = computePendingCommitments(op);
+		// src/bar.ts was committed but not in artifacts → pending
+		expect(pending.some((c) => c.includes("src/bar.ts"))).toBe(true);
+		// src/foo.ts was committed and IS in artifacts → not pending
+		expect(pending.some((c) => c === "edit src/foo.ts")).toBe(false);
+	});
+
+	it("includes non-file commitments from last turn", () => {
+		const lastTurn = makeTurn(1, ["bash"], [], {
+			commitments: ["run the test suite"],
+		});
+		const op = makeOperation({
+			turns: [lastTurn],
+			artifacts: [],
+			outcome: "partial",
+		});
+		const pending = computePendingCommitments(op);
+		expect(pending).toContain("run the test suite");
+	});
+
+	it("does not include non-file commitments from non-last turns", () => {
+		const firstTurn = makeTurn(0, ["read"], ["src/foo.ts"], {
+			commitments: ["check the documentation"],
+		});
+		const lastTurn = makeTurn(1, ["write"], ["src/bar.ts"], {
+			commitments: [],
+		});
+		const op = makeOperation({
+			turns: [firstTurn, lastTurn],
+			artifacts: ["src/bar.ts"],
+			outcome: "partial",
+		});
+		const pending = computePendingCommitments(op);
+		// "check the documentation" is non-file and from a non-last turn → not included
+		expect(pending).not.toContain("check the documentation");
+	});
+
+	it("returns empty array when no commitments in any turn", () => {
+		const turn = makeTurn(0, ["read"], ["src/foo.ts"]);
+		const op = makeOperation({
+			turns: [turn],
+			artifacts: [],
+			outcome: "partial",
+		});
+		expect(computePendingCommitments(op)).toEqual([]);
+	});
+
+	it("caps result at 10 items", () => {
+		const commitments = Array.from({ length: 15 }, (_, i) => `edit src/file${i}.ts`);
+		const turn = makeTurn(0, ["read"], [], { commitments });
+		const op = makeOperation({
+			turns: [turn],
+			artifacts: [],
+			outcome: "partial",
+		});
+		const pending = computePendingCommitments(op);
+		expect(pending.length).toBeLessThanOrEqual(10);
 	});
 });

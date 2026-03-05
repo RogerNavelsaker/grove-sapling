@@ -112,6 +112,106 @@ function detectError(toolResults: (Message & { role: "user" }) | null): boolean 
 	);
 }
 
+// ---------------------------------------------------------------------------
+// Commitment extraction
+// ---------------------------------------------------------------------------
+
+/** Regex patterns for extracting future-action commitments from assistant text. */
+const COMMITMENT_NUMBERED_PATTERN = /^\s*\d+[.)]\s+(.{5,150})$/gm;
+const COMMITMENT_BULLET_PATTERN = /^\s*[-*]\s+(.{5,150})$/gm;
+const COMMITMENT_FUTURE_PATTERN =
+	/\b(?:I(?:'ll| will| need to| should| must)|(?:then |next |also )I(?:'ll| will))\s+([^.!?\n]{5,120})/gi;
+
+/** Matches file paths and action verbs to filter relevant commitment items. */
+const COMMITMENT_ACTION_PATTERN =
+	/\b(?:edit|write|create|update|fix|add|remove|implement|run|test|check|modify|read|delete|rename|move|refactor)\b/i;
+const COMMITMENT_FILE_PATTERN =
+	/(?:[\w.-]+\/[\w.-]+|[\w.-]+\.(?:ts|js|py|go|rs|json|yaml|yml|md|css|html))/;
+
+/** Regex to extract file paths from a commitment string. */
+const FILE_IN_COMMITMENT_PATTERN =
+	/(?:^|[\s"'`=,([{])(\/?(?:[\w.-]+\/)+[\w.-]+\.\w+|[\w.-]+\.(?:ts|js|py|go|rs|json|yaml|yml|md|css|html))/g;
+
+/**
+ * Extract future-action commitments from assistant text.
+ * Detects numbered/bulleted action lists and future-tense promises.
+ * Returns deduplicated list, capped at 20 items.
+ */
+export function extractCommitments(text: string): string[] {
+	const commitments = new Set<string>();
+
+	// Numbered lists: "1. edit foo.ts"
+	for (const match of text.matchAll(COMMITMENT_NUMBERED_PATTERN)) {
+		const item = match[1]?.trim();
+		if (item && (COMMITMENT_ACTION_PATTERN.test(item) || COMMITMENT_FILE_PATTERN.test(item))) {
+			commitments.add(item.slice(0, 120));
+		}
+	}
+
+	// Bulleted lists: "- edit foo.ts"
+	for (const match of text.matchAll(COMMITMENT_BULLET_PATTERN)) {
+		const item = match[1]?.trim();
+		if (item && (COMMITMENT_ACTION_PATTERN.test(item) || COMMITMENT_FILE_PATTERN.test(item))) {
+			commitments.add(item.slice(0, 120));
+		}
+	}
+
+	// Future-tense promises: "I'll edit foo.ts", "I need to run tests"
+	for (const match of text.matchAll(COMMITMENT_FUTURE_PATTERN)) {
+		const action = match[1]?.trim();
+		if (action && action.length >= 5) {
+			commitments.add(action.slice(0, 120));
+		}
+	}
+
+	return [...commitments].slice(0, 20);
+}
+
+/**
+ * Extract file paths mentioned in a commitment string.
+ */
+function extractFilesFromCommitment(commitment: string): string[] {
+	const files: string[] = [];
+	for (const match of commitment.matchAll(FILE_IN_COMMITMENT_PATTERN)) {
+		if (match[1] !== undefined) files.push(match[1]);
+	}
+	return files;
+}
+
+/**
+ * Compute pending commitments for an operation at finalization time.
+ * A commitment is "pending" if:
+ *   - It mentions file paths that are not in op.artifacts (the file was never modified), OR
+ *   - It has no file paths and comes from the last turn (general unresolved promise).
+ * Returns empty list if outcome is "success" (all work completed).
+ */
+export function computePendingCommitments(op: Operation): string[] {
+	if (op.outcome === "success") return [];
+
+	const artifactSet = new Set(op.artifacts);
+	const pending: string[] = [];
+	const lastTurnCommitments = new Set<string>(
+		op.turns[op.turns.length - 1]?.meta.commitments ?? [],
+	);
+
+	for (const turn of op.turns) {
+		for (const commitment of turn.meta.commitments ?? []) {
+			const mentionedFiles = extractFilesFromCommitment(commitment);
+			if (mentionedFiles.length > 0) {
+				// Pending if any mentioned file was not produced as an artifact
+				if (mentionedFiles.some((f) => !artifactSet.has(f))) {
+					pending.push(commitment);
+				}
+			} else if (lastTurnCommitments.has(commitment)) {
+				// Non-file commitment from the last turn — include as-is
+				pending.push(commitment);
+			}
+		}
+	}
+
+	return [...new Set(pending)].slice(0, 10);
+}
+
 /**
  * Detect whether the assistant text contains decision language.
  */
@@ -149,6 +249,7 @@ function extractTurnMetadata(
 		hasDecision: detectDecision(assistantText),
 		tokens: assistantTokens + resultTokens,
 		timestamp: Date.now(),
+		commitments: extractCommitments(assistantText),
 	};
 }
 
@@ -425,6 +526,7 @@ function createOperation(turn: Turn, id: number): Operation {
 		dependsOn: [],
 		score: 0,
 		summary: null,
+		pendingCommitments: [],
 		startTurn: turn.index,
 		endTurn: turn.index,
 	};
@@ -454,6 +556,7 @@ function addTurnToOperation(op: Operation, turn: Turn): Operation {
 function finalizeOperation(op: Operation): Operation {
 	op.status = "completed";
 	op.outcome = inferOutcome(op);
+	op.pendingCommitments = computePendingCommitments(op);
 	return op;
 }
 
@@ -519,7 +622,7 @@ export function ingestTurn(
 		// Finalize active operation (copy to avoid mutating the original array element)
 		updatedOps[activeIdx] = finalizeOperation(Object.assign({}, activeOp));
 		// Create new operation and populate dependsOn based on artifact overlap / error chain
-		const newOp = createOperation(turn);
+		const newOp = createOperation(turn, nextOperationId);
 		newOp.dependsOn = computeDependsOn(newOp.files, updatedOps);
 		updatedOps.push(newOp);
 		return {
