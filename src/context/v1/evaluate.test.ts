@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
 	causalDependencyScore,
+	DEFAULT_SIGNALS,
 	evaluate,
 	evaluateOperation,
 	fileOverlapScore,
@@ -8,7 +9,7 @@ import {
 	outcomeSignificanceScore,
 	recencyScore,
 } from "./evaluate.ts";
-import type { Operation } from "./types.ts";
+import type { EvalSignal, Operation } from "./types.ts";
 import { EVAL_WEIGHTS, RECENCY_HALF_LIFE_OPS } from "./types.ts";
 
 // ---------------------------------------------------------------------------
@@ -294,6 +295,102 @@ describe("evaluateOperation", () => {
 			EVAL_WEIGHTS.outcomeSignificance * 0.3 +
 			EVAL_WEIGHTS.operationType * 0.3;
 		expect(evaluateOperation(op, null, 1)).toBeCloseTo(expected, 6);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Signal registry
+// ---------------------------------------------------------------------------
+
+describe("DEFAULT_SIGNALS", () => {
+	it("contains exactly 5 signals with the expected names", () => {
+		const names = DEFAULT_SIGNALS.map((s) => s.name);
+		expect(names).toEqual([
+			"recency",
+			"fileOverlap",
+			"causalDependency",
+			"outcomeSignificance",
+			"operationType",
+		]);
+	});
+
+	it("default signal weights match EVAL_WEIGHTS", () => {
+		const byName = Object.fromEntries(DEFAULT_SIGNALS.map((s) => [s.name, s.weight]));
+		expect(byName["recency"]).toBeCloseTo(EVAL_WEIGHTS.recency);
+		expect(byName["fileOverlap"]).toBeCloseTo(EVAL_WEIGHTS.fileOverlap);
+		expect(byName["causalDependency"]).toBeCloseTo(EVAL_WEIGHTS.causalDependency);
+		expect(byName["outcomeSignificance"]).toBeCloseTo(EVAL_WEIGHTS.outcomeSignificance);
+		expect(byName["operationType"]).toBeCloseTo(EVAL_WEIGHTS.operationType);
+	});
+});
+
+describe("evaluateOperation with custom signal registry", () => {
+	it("custom single-signal registry: score equals that signal's scoreFn result", () => {
+		const op = makeOp({ id: 0, outcome: "failure", type: "explore" });
+		// Single signal that always returns 0.7 — weight normalization is irrelevant
+		const custom: EvalSignal[] = [{ name: "constant", weight: 1, scoreFn: () => 0.7 }];
+		expect(evaluateOperation(op, null, 1, custom)).toBeCloseTo(0.7, 6);
+	});
+
+	it("weights are auto-normalized: doubled weights produce same score", () => {
+		const op = makeOp({ id: 0, type: "mutate", outcome: "success" });
+		const activeOp = makeOp({ id: 1, status: "active", files: new Set(["a.ts"]) });
+
+		const baseline = evaluateOperation(op, activeOp, 2);
+
+		// Double every weight — normalized result must be identical
+		const doubled = DEFAULT_SIGNALS.map((s) => ({ ...s, weight: s.weight * 2 }));
+		expect(evaluateOperation(op, activeOp, 2, doubled)).toBeCloseTo(baseline, 6);
+	});
+
+	it("signal that always returns 1.0 produces score 1.0", () => {
+		const op = makeOp({ id: 5, outcome: "success" });
+		const alwaysOne: EvalSignal[] = [{ name: "max", weight: 1, scoreFn: () => 1.0 }];
+		expect(evaluateOperation(op, null, 6, alwaysOne)).toBeCloseTo(1.0, 6);
+	});
+
+	it("signal that always returns 0.0 produces score 0.0", () => {
+		const op = makeOp({ id: 0, outcome: "success" });
+		const alwaysZero: EvalSignal[] = [{ name: "min", weight: 1, scoreFn: () => 0.0 }];
+		expect(evaluateOperation(op, null, 1, alwaysZero)).toBeCloseTo(0.0, 6);
+	});
+
+	it("two equal-weight signals average their scores", () => {
+		const op = makeOp({ id: 0 });
+		const custom: EvalSignal[] = [
+			{ name: "a", weight: 1, scoreFn: () => 0.2 },
+			{ name: "b", weight: 1, scoreFn: () => 0.8 },
+		];
+		expect(evaluateOperation(op, null, 1, custom)).toBeCloseTo(0.5, 6);
+	});
+
+	it("higher-weight signal dominates score", () => {
+		const op = makeOp({ id: 0 });
+		const custom: EvalSignal[] = [
+			{ name: "heavy", weight: 9, scoreFn: () => 1.0 },
+			{ name: "light", weight: 1, scoreFn: () => 0.0 },
+		];
+		// Expected: 9/10 * 1.0 + 1/10 * 0.0 = 0.9
+		expect(evaluateOperation(op, null, 1, custom)).toBeCloseTo(0.9, 6);
+	});
+
+	it("scoreFn receives correct opsAgo in context", () => {
+		let capturedOpsAgo = -1;
+		const probe: EvalSignal[] = [
+			{
+				name: "probe",
+				weight: 1,
+				scoreFn: ({ opsAgo }) => {
+					capturedOpsAgo = opsAgo;
+					return 0;
+				},
+			},
+		];
+		const op = makeOp({ id: 0 });
+		const active = makeOp({ id: 2, status: "active" });
+		// opsAgo = totalOps - 1 - op.id = 3 - 1 - 0 = 2
+		evaluateOperation(op, active, 3, probe);
+		expect(capturedOpsAgo).toBe(2);
 	});
 });
 

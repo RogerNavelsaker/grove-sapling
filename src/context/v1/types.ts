@@ -169,7 +169,7 @@ export interface BoundarySignals {
 }
 
 // ---------------------------------------------------------------------------
-// Evaluate weights
+// Evaluate weights & signal registry
 // ---------------------------------------------------------------------------
 
 export interface EvalWeights {
@@ -178,6 +178,32 @@ export interface EvalWeights {
 	causalDependency: number;
 	outcomeSignificance: number;
 	operationType: number;
+}
+
+/** Context passed to each signal's scoring function. */
+export interface EvalSignalContext {
+	/** The operation being scored. */
+	op: Operation;
+	/** The currently active operation (null when there is none). */
+	activeOp: Operation | null;
+	/** How many operations ago this one ended (0 = active). */
+	opsAgo: number;
+	/** Files touched by the active operation (empty Set when no active op). */
+	activeFiles: Set<string>;
+}
+
+/**
+ * A pluggable evaluation signal.
+ * Weights are auto-normalized when building a registry, so they do not need
+ * to sum to 1.0 — only their relative magnitudes matter.
+ */
+export interface EvalSignal {
+	/** Human-readable identifier (e.g. "recency", "fileOverlap"). */
+	name: string;
+	/** Relative weight for this signal (will be normalized by the registry). */
+	weight: number;
+	/** Returns a score in [0, 1] for the given context. */
+	scoreFn: (ctx: EvalSignalContext) => number;
 }
 
 // ---------------------------------------------------------------------------
