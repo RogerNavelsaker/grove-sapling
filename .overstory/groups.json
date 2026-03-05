@@ -321,8 +321,18 @@
 			"sapling-2da7",
 			"sapling-9570"
 		],
-		"status": "active",
+		"status": "completed",
 		"createdAt": "2026-03-05T00:07:36.917Z",
+		"completedAt": "2026-03-05T01:25:41.273Z"
+	},
+	{
+		"id": "group-82880d70",
+		"name": "fix-91-tests",
+		"memberIssueIds": [
+			"sapling-ab42"
+		],
+		"status": "active",
+		"createdAt": "2026-03-05T04:34:23.269Z",
 		"completedAt": null
 	}
 ]
