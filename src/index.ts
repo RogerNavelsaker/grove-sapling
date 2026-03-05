@@ -62,6 +62,7 @@ program
 	.option("-q, --quiet", "Suppress non-essential output")
 	.option("--guards-file <path>", "Path to guards config JSON file")
 	.option("--mode <mode>", "Execution mode: one-shot (default) or rpc")
+	.option("--dry-run", "Show what tools would do without executing")
 	.action(
 		async (prompt: string | undefined, options: Record<string, string | boolean | undefined>) => {
 			try {
@@ -106,6 +107,7 @@ program
 					json: isRpcMode ? true : (options.json as boolean | undefined),
 					guardsFile: options.guardsFile as string | undefined,
 					rpcMode: isRpcMode,
+					dryRun: options.dryRun === true,
 				};
 
 				const config = await loadConfig({
