@@ -164,6 +164,8 @@ export interface BoundarySignals {
 	fileScopeChange: boolean;
 	intentSignal: boolean;
 	temporalGap: boolean;
+	/** True when a tool result contains a [STEER] block with redirect language. */
+	steerRedirect: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -182,8 +184,17 @@ export interface EvalWeights {
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Boundary detection signal weights (must sum to 1.0). */
-export const BOUNDARY_WEIGHTS: Readonly<Record<keyof BoundarySignals, number>> = {
+/**
+ * Boundary detection signal weights for weighted signals (must sum to 1.0).
+ * Note: steerRedirect is handled as an unconditional override in detectBoundary
+ * and is not included in this weighted sum.
+ */
+export const BOUNDARY_WEIGHTS: Readonly<{
+	toolTypeTransition: number;
+	fileScopeChange: number;
+	intentSignal: number;
+	temporalGap: number;
+}> = {
 	toolTypeTransition: 0.35,
 	fileScopeChange: 0.3,
 	intentSignal: 0.2,
@@ -202,6 +213,26 @@ export const TOOL_PHASES: Readonly<Record<string, ToolPhase>> = {
 	edit: "write",
 	bash: "verify",
 } as const;
+
+/**
+ * Regex patterns that identify redirect language in [STEER] payloads.
+ * A match signals that the steer message is redirecting the agent to a new task,
+ * warranting an operation boundary.
+ */
+export const STEER_REDIRECT_PATTERNS: readonly RegExp[] = [
+	/\bstop (?:what you(?:'re| are) doing|the current task|that)\b/i,
+	/\binstead[,.]?\s+(?:do|focus|work|try|implement|start|fix|write|run)\b/i,
+	/\bnew (?:priority|task|direction|goal|objective)\b/i,
+	/\bignore (?:what|that|the current|the previous)\b/i,
+	/\bchange of plans?\b/i,
+	/\bcancel (?:that|what you|the current)\b/i,
+	/\bscratch that\b/i,
+	/\bnever mind\b/i,
+	/\bpivot to\b/i,
+	/\babandon (?:that|this|the current)\b/i,
+	/\bactually[,.]?\s+(?:do|let(?:'s| us)|I want|please|focus|start|fix|write|run)\b/i,
+	/\bforget (?:about )?(?:what|that|the current|the previous)\b/i,
+] as const;
 
 /** Regex patterns indicating the agent is transitioning to a new sub-task. */
 export const INTENT_PATTERNS: readonly RegExp[] = [

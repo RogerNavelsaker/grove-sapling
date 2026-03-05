@@ -11,7 +11,13 @@
 
 import type { Message } from "../../types.ts";
 import type { BoundarySignals, Operation, OperationType, Turn, TurnMetadata } from "./types.ts";
-import { BOUNDARY_THRESHOLD, BOUNDARY_WEIGHTS, INTENT_PATTERNS, TOOL_PHASES } from "./types.ts";
+import {
+	BOUNDARY_THRESHOLD,
+	BOUNDARY_WEIGHTS,
+	INTENT_PATTERNS,
+	STEER_REDIRECT_PATTERNS,
+	TOOL_PHASES,
+} from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Turn extraction
@@ -219,6 +225,24 @@ export function hasIntentSignal(assistantText: string): boolean {
 }
 
 /**
+ * Detect steer redirect: any tool result in the turn contains a [STEER] block
+ * with redirect language, indicating the agent is being redirected to a new task.
+ */
+export function hasSteerRedirect(toolResults: (Message & { role: "user" }) | null): boolean {
+	if (!toolResults || !Array.isArray(toolResults.content)) return false;
+	for (const block of toolResults.content as unknown[]) {
+		if (typeof block !== "object" || block === null) continue;
+		if ((block as { type: unknown }).type !== "tool_result") continue;
+		const content = (block as { type: string; content: string }).content;
+		if (typeof content !== "string") continue;
+		// Only examine blocks that are steer injections
+		if (!content.startsWith("[STEER]")) continue;
+		if (STEER_REDIRECT_PATTERNS.some((p) => p.test(content))) return true;
+	}
+	return false;
+}
+
+/**
  * Detect temporal gap: > 30 seconds between last operation turn and current turn.
  */
 export function hasTemporalGap(lastTimestamp: number, currentTimestamp: number): boolean {
@@ -238,13 +262,17 @@ export function computeBoundarySignals(activeOp: Operation, turn: Turn): Boundar
 		fileScopeChange: hasFileScopeChange(activeOp.files, turn.meta.files),
 		intentSignal: hasIntentSignal(assistantText),
 		temporalGap: hasTemporalGap(lastTimestamp, turn.meta.timestamp),
+		steerRedirect: hasSteerRedirect(turn.toolResults),
 	};
 }
 
 /**
  * Compute weighted boundary score and return whether a boundary is detected.
+ * steerRedirect is an unconditional override: a steer with redirect language
+ * always triggers a boundary regardless of other signals.
  */
 export function detectBoundary(signals: BoundarySignals): boolean {
+	if (signals.steerRedirect) return true;
 	const score =
 		(signals.toolTypeTransition ? BOUNDARY_WEIGHTS.toolTypeTransition : 0) +
 		(signals.fileScopeChange ? BOUNDARY_WEIGHTS.fileScopeChange : 0) +

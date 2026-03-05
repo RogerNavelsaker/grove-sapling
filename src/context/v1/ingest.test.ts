@@ -9,6 +9,7 @@ import {
 	extractTurns,
 	hasFileScopeChange,
 	hasIntentSignal,
+	hasSteerRedirect,
 	hasTemporalGap,
 	hasToolTransition,
 	inferOperationType,
@@ -282,6 +283,91 @@ describe("hasTemporalGap", () => {
 });
 
 // ---------------------------------------------------------------------------
+// hasSteerRedirect
+// ---------------------------------------------------------------------------
+
+function makeSteerToolResult(content: string): Message & { role: "user" } {
+	const blocks = [
+		{
+			type: "tool_result" as const,
+			tool_use_id: "tu_steer",
+			content,
+		},
+	] as unknown as import("../../types.ts").ContentBlock[];
+	return { role: "user", content: blocks };
+}
+
+describe("hasSteerRedirect", () => {
+	it("returns false for null toolResults", () => {
+		expect(hasSteerRedirect(null)).toBe(false);
+	});
+
+	it("returns false when no [STEER] prefix", () => {
+		// Regular tool result without steer prefix
+		const msg = makeSteerToolResult("stop what you're doing and pivot to X");
+		expect(hasSteerRedirect(msg)).toBe(false);
+	});
+
+	it("returns false for [STEER] with non-redirect content", () => {
+		const msg = makeSteerToolResult("[STEER] Keep going, you're doing great.");
+		expect(hasSteerRedirect(msg)).toBe(false);
+	});
+
+	it("detects 'stop what you're doing'", () => {
+		const msg = makeSteerToolResult("[STEER] Stop what you're doing and fix the bug.");
+		expect(hasSteerRedirect(msg)).toBe(true);
+	});
+
+	it("detects 'instead do'", () => {
+		const msg = makeSteerToolResult("[STEER] Instead do the linting first.");
+		expect(hasSteerRedirect(msg)).toBe(true);
+	});
+
+	it("detects 'new priority'", () => {
+		const msg = makeSteerToolResult("[STEER] New priority: fix the failing test.");
+		expect(hasSteerRedirect(msg)).toBe(true);
+	});
+
+	it("detects 'never mind'", () => {
+		const msg = makeSteerToolResult("[STEER] Never mind, we don't need that.");
+		expect(hasSteerRedirect(msg)).toBe(true);
+	});
+
+	it("detects 'change of plans'", () => {
+		const msg = makeSteerToolResult("[STEER] Change of plans — do the refactor instead.");
+		expect(hasSteerRedirect(msg)).toBe(true);
+	});
+
+	it("detects 'pivot to'", () => {
+		const msg = makeSteerToolResult("[STEER] Pivot to writing tests now.");
+		expect(hasSteerRedirect(msg)).toBe(true);
+	});
+
+	it("detects 'actually, do'", () => {
+		const msg = makeSteerToolResult("[STEER] Actually, do the integration tests first.");
+		expect(hasSteerRedirect(msg)).toBe(true);
+	});
+
+	it("detects 'scratch that'", () => {
+		const msg = makeSteerToolResult("[STEER] Scratch that — focus on the config file.");
+		expect(hasSteerRedirect(msg)).toBe(true);
+	});
+
+	it("is case insensitive", () => {
+		const msg = makeSteerToolResult("[STEER] STOP WHAT YOU'RE DOING!");
+		expect(hasSteerRedirect(msg)).toBe(true);
+	});
+
+	it("returns false for non-array content", () => {
+		const msg: Message & { role: "user" } = {
+			role: "user",
+			content: "[STEER] stop what you're doing",
+		};
+		expect(hasSteerRedirect(msg)).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // detectBoundary
 // ---------------------------------------------------------------------------
 
@@ -293,6 +379,7 @@ describe("detectBoundary", () => {
 				fileScopeChange: false,
 				intentSignal: false,
 				temporalGap: false,
+				steerRedirect: false,
 			}),
 		).toBe(false);
 	});
@@ -304,6 +391,7 @@ describe("detectBoundary", () => {
 				fileScopeChange: true,
 				intentSignal: false,
 				temporalGap: false,
+				steerRedirect: false,
 			}),
 		).toBe(true);
 	});
@@ -315,6 +403,7 @@ describe("detectBoundary", () => {
 				fileScopeChange: false,
 				intentSignal: true,
 				temporalGap: false,
+				steerRedirect: false,
 			}),
 		).toBe(true);
 	});
@@ -326,6 +415,7 @@ describe("detectBoundary", () => {
 				fileScopeChange: false,
 				intentSignal: true,
 				temporalGap: true,
+				steerRedirect: false,
 			}),
 		).toBe(false);
 	});
@@ -337,6 +427,7 @@ describe("detectBoundary", () => {
 				fileScopeChange: true,
 				intentSignal: true,
 				temporalGap: true,
+				steerRedirect: false,
 			}),
 		).toBe(true);
 	});
@@ -348,6 +439,7 @@ describe("detectBoundary", () => {
 				fileScopeChange: false,
 				intentSignal: false,
 				temporalGap: false,
+				steerRedirect: false,
 			}),
 		).toBe(false);
 	});
@@ -359,6 +451,7 @@ describe("detectBoundary", () => {
 				fileScopeChange: true,
 				intentSignal: false,
 				temporalGap: false,
+				steerRedirect: false,
 			}),
 		).toBe(false);
 	});
@@ -370,6 +463,19 @@ describe("detectBoundary", () => {
 				fileScopeChange: true,
 				intentSignal: true,
 				temporalGap: false,
+				steerRedirect: false,
+			}),
+		).toBe(true);
+	});
+
+	it("returns true when steerRedirect alone (override, no other signals)", () => {
+		expect(
+			detectBoundary({
+				toolTypeTransition: false,
+				fileScopeChange: false,
+				intentSignal: false,
+				temporalGap: false,
+				steerRedirect: true,
 			}),
 		).toBe(true);
 	});
@@ -500,6 +606,47 @@ describe("ingestTurn", () => {
 		const r2 = ingestTurn(r1.operations, r1.activeOperationId, t2);
 
 		expect(r2.operations[0]?.outcome).not.toBe("in_progress");
+	});
+
+	it("creates new operation when steer redirect is detected (same files/tools)", () => {
+		// Steer redirect alone triggers boundary even when other signals don't fire
+		const now = Date.now();
+		const t1 = makeTurn(0, ["read"], ["src/foo.ts"], { timestamp: now });
+
+		// Build a turn that would NOT normally trigger a boundary (same tool, same file)
+		// but has a steer redirect in its tool results
+		const assistantMsg = makeAssistantMsg([{ name: "read", path: "src/foo.ts" }]);
+		const steerBlocks = [
+			{
+				type: "tool_result" as const,
+				tool_use_id: "tu_read",
+				content: "[STEER] Stop what you're doing and focus on the auth module instead.",
+			},
+		] as unknown as import("../../types.ts").ContentBlock[];
+		const steerUserMsg: Message & { role: "user" } = { role: "user", content: steerBlocks };
+		const t2: import("./types.ts").Turn = {
+			index: 1,
+			assistant: assistantMsg,
+			toolResults: steerUserMsg,
+			meta: {
+				tools: ["read"],
+				files: ["src/foo.ts"],
+				hasError: false,
+				hasDecision: false,
+				tokens: 100,
+				timestamp: now + 100,
+			},
+		};
+
+		const r1 = ingestTurn([], null, t1);
+		r1.operations[0]?.tools.add("read");
+		r1.operations[0]?.files.add("src/foo.ts");
+
+		const r2 = ingestTurn(r1.operations, r1.activeOperationId, t2);
+
+		expect(r2.operations).toHaveLength(2);
+		expect(r2.operations[0]?.status).toBe("completed");
+		expect(r2.operations[1]?.status).toBe("active");
 	});
 });
 
