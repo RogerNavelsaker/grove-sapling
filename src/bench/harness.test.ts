@@ -11,7 +11,6 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type { ContextBudget } from "../types.ts";
 import { formatResult, runAllBenchmarks, runBenchmark } from "./harness.ts";
 import {
 	ALL_SCENARIOS,
@@ -234,17 +233,7 @@ describe("context limits", () => {
 
 	it("context limit tracking works with a tiny window", () => {
 		// Use a tiny 2K window — fields should still be numeric
-		const tinyBudget: ContextBudget = {
-			windowSize: 2_000,
-			allocations: {
-				systemPrompt: 0.15,
-				archiveSummary: 0.1,
-				recentHistory: 0.4,
-				currentTurn: 0.15,
-				headroom: 0.2,
-			},
-		};
-		const result = runBenchmark(LONG_SCENARIO, { budget: tinyBudget });
+		const result = runBenchmark(LONG_SCENARIO, { windowSize: 2_000 });
 		expect(typeof result.v1.contextLimitHits).toBe("number");
 		expect(result.v1.contextLimitHits).toBeGreaterThanOrEqual(0);
 	});

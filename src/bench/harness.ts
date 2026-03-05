@@ -15,7 +15,7 @@
  */
 
 import { extractTurnHint, SaplingPipelineV1 } from "../context/v1/pipeline.ts";
-import type { BudgetUtilization, ContextBudget, Message, TokenUsage } from "../types.ts";
+import type { Message, TokenUsage } from "../types.ts";
 import type { BenchmarkScenario } from "./scenarios.ts";
 
 // ─── Result Types ─────────────────────────────────────────────────────────────
@@ -26,8 +26,8 @@ export interface TurnMetrics {
 	inputTokens: number;
 	/** Messages in context window this turn. */
 	messageCount: number;
-	/** Utilization snapshot after context manager ran. */
-	utilization: BudgetUtilization;
+	/** Utilization fraction (0.0–1.0): inputTokens / windowSize. */
+	utilization: number;
 }
 
 /** Per-turn metrics specific to the v1 pipeline. */
@@ -107,10 +107,10 @@ export interface V1BenchmarkMetrics {
 
 export interface HarnessOptions {
 	/**
-	 * Context budget override. Defaults to a 200K window matching DEFAULT_BUDGET.
+	 * Context window size in tokens. Defaults to 200K.
 	 * Override for testing smaller windows.
 	 */
-	budget?: ContextBudget;
+	windowSize?: number;
 	/**
 	 * System prompt text (used for token accounting). Defaults to a short placeholder.
 	 */
@@ -171,21 +171,6 @@ function dummyUsage(inputTokens: number): TokenUsage {
 	return { inputTokens, outputTokens: 50 };
 }
 
-/**
- * Build a zero-utilization snapshot (for baseline where there's no manager).
- */
-function zeroUtilization(budget: ContextBudget): BudgetUtilization {
-	const w = budget.windowSize;
-	return {
-		systemPrompt: { used: 0, budget: Math.floor(w * budget.allocations.systemPrompt) },
-		archiveSummary: { used: 0, budget: Math.floor(w * budget.allocations.archiveSummary) },
-		recentHistory: { used: 0, budget: Math.floor(w * budget.allocations.recentHistory) },
-		currentTurn: { used: 0, budget: Math.floor(w * budget.allocations.currentTurn) },
-		headroom: { used: w, budget: Math.floor(w * budget.allocations.headroom) },
-		total: { used: 0, budget: w },
-	};
-}
-
 // ─── Baseline Runner ──────────────────────────────────────────────────────────
 
 /**
@@ -197,7 +182,7 @@ function zeroUtilization(budget: ContextBudget): BudgetUtilization {
 function runBaseline(
 	taskPrompt: string,
 	scenarioMessages: Message[],
-	budget: ContextBudget,
+	windowSize: number,
 ): { total: number; turns: TurnMetrics[] } {
 	const turnMetrics: TurnMetrics[] = [];
 	let totalInputTokens = 0;
@@ -221,15 +206,11 @@ function runBaseline(
 			const inputTokens = estimateContextTokens(messages);
 			totalInputTokens += inputTokens;
 
-			const util = zeroUtilization(budget);
-			util.total.used = inputTokens;
-			util.recentHistory.used = inputTokens;
-
 			turnMetrics.push({
 				turn,
 				inputTokens,
 				messageCount: messages.length,
-				utilization: util,
+				utilization: Math.min(1.0, inputTokens / windowSize),
 			});
 
 			// Append assistant message to the accumulating history
@@ -372,24 +353,15 @@ export function runBenchmark(
 	scenario: BenchmarkScenario,
 	options: HarnessOptions = {},
 ): BenchmarkResult {
-	const budget: ContextBudget = options.budget ?? {
-		windowSize: 200_000,
-		allocations: {
-			systemPrompt: 0.15,
-			archiveSummary: 0.1,
-			recentHistory: 0.4,
-			currentTurn: 0.15,
-			headroom: 0.2,
-		},
-	};
+	const windowSize = options.windowSize ?? 200_000;
 	const systemPrompt =
 		options.systemPrompt ?? "You are a coding agent. Use the available tools to complete the task.";
 
 	// Run baseline
-	const baseline = runBaseline(scenario.taskPrompt, scenario.messages, budget);
+	const baseline = runBaseline(scenario.taskPrompt, scenario.messages, windowSize);
 
 	// Run v1 pipeline
-	const raw = runV1(scenario.taskPrompt, scenario.messages, budget.windowSize, systemPrompt);
+	const raw = runV1(scenario.taskPrompt, scenario.messages, windowSize, systemPrompt);
 	const baseTotal = baseline.total;
 	const v1ReductionFraction =
 		baseTotal > 0 ? Math.max(0, (baseTotal - raw.totalInputTokens) / baseTotal) : 0;

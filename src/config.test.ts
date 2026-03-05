@@ -56,23 +56,6 @@ describe("validateConfig", () => {
 	it("throws ConfigError for contextWindow Infinity", () => {
 		expect(() => validateConfig({ contextWindow: Infinity })).toThrow(ConfigError);
 	});
-
-	it("throws ConfigError when budget allocations exceed 1.0", () => {
-		expect(() =>
-			validateConfig({
-				contextBudget: {
-					windowSize: 200_000,
-					allocations: {
-						systemPrompt: 0.5,
-						archiveSummary: 0.5,
-						recentHistory: 0.5,
-						currentTurn: 0.5,
-						headroom: 0.5,
-					},
-				},
-			}),
-		).toThrow(ConfigError);
-	});
 });
 
 describe("loadConfig", () => {

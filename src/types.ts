@@ -133,17 +133,6 @@ export interface SessionRecord {
 
 export type LlmBackend = "sdk";
 
-export interface ContextBudget {
-	windowSize: number;
-	allocations: {
-		systemPrompt: number;
-		archiveSummary: number;
-		recentHistory: number;
-		currentTurn: number;
-		headroom: number;
-	};
-}
-
 export interface SaplingConfig {
 	model: string;
 	backend: LlmBackend;
@@ -153,7 +142,6 @@ export interface SaplingConfig {
 	quiet: boolean;
 	json: boolean;
 	contextWindow: number;
-	contextBudget: ContextBudget;
 	apiBaseUrl?: string;
 	apiKey?: string;
 	guardsFile?: string;
@@ -177,15 +165,6 @@ export interface RunOptions {
 export interface BudgetEntry {
 	used: number;
 	budget: number;
-}
-
-export interface BudgetUtilization {
-	systemPrompt: BudgetEntry;
-	archiveSummary: BudgetEntry;
-	recentHistory: BudgetEntry;
-	currentTurn: BudgetEntry;
-	headroom: BudgetEntry;
-	total: BudgetEntry;
 }
 
 // ─── Tool Types ───────────────────────────────────────────────────────────────
