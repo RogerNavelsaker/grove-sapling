@@ -331,8 +331,28 @@
 		"memberIssueIds": [
 			"sapling-ab42"
 		],
-		"status": "active",
+		"status": "completed",
 		"createdAt": "2026-03-05T04:34:23.269Z",
+		"completedAt": "2026-03-05T17:28:19.713Z"
+	},
+	{
+		"id": "group-9b281d43",
+		"name": "bash-phase-enrichment",
+		"memberIssueIds": [
+			"sapling-9d47"
+		],
+		"status": "active",
+		"createdAt": "2026-03-05T17:30:15.065Z",
+		"completedAt": null
+	},
+	{
+		"id": "group-454586da",
+		"name": "v1done-audit",
+		"memberIssueIds": [
+			"sapling-67f2"
+		],
+		"status": "active",
+		"createdAt": "2026-03-07T14:32:13.731Z",
 		"completedAt": null
 	}
 ]

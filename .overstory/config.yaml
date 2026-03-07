@@ -51,7 +51,10 @@ logging:
   verbose: false
   redactSecrets: true
 runtime:
-  default: claude
+  default: sapling
+  capabilities:
+    lead: claude
+    coordinator: claude
   shellInitDelayMs: 0
   pi:
     provider: anthropic
