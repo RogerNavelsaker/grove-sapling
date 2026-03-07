@@ -100,6 +100,8 @@ export interface LoopOptions {
 	setState?: (state: { turn: number; phase: "calling_llm" | "executing_tools" | "idle" }) => void;
 	/** Context window size in tokens for the v1 pipeline. */
 	contextWindowSize?: number;
+	/** Abort signal for graceful shutdown (e.g. SIGTERM from ov stop). */
+	abortSignal?: AbortSignal;
 }
 
 export interface LoopResult {

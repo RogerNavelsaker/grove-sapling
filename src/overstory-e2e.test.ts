@@ -437,7 +437,87 @@ describe("overstory runtime E2E", () => {
 		expect(states[0]?.phase).toBe("calling_llm");
 	});
 
-	// ── 10. Full subprocess E2E (gated) ────────────────────────────────────────
+	// ── 10. abortSignal terminates loop gracefully (ov stop → SIGTERM) ────────
+	// When ov stop sends SIGTERM, the CLI wires it to abortSignal. Verify
+	// the loop exits with "aborted" and fires onSessionEnd.
+
+	it("abortSignal terminates loop gracefully with onSessionEnd", async () => {
+		const markerFile = join(testDir, "signal-end-marker");
+		const eventConfig: EventConfig = {
+			onSessionEnd: ["touch", markerFile],
+		};
+		const { emitter, events } = createCapturingEmitter();
+
+		const abortController = new AbortController();
+
+		// Client that delays enough for the abort to fire between turns
+		const callCount = { n: 0 };
+		const filePath = join(testDir, "data.txt");
+		await Bun.write(filePath, "content");
+
+		const client = createMockClient([
+			mockToolUseResponse("read", { file_path: filePath }, "tc-1"),
+			// Second call will never be reached — abort fires before turn 2
+			mockTextResponse("Should not reach here."),
+		]);
+
+		// Abort after the first turn completes (tool dispatch finishes)
+		const originalCall = client.call.bind(client);
+		client.call = async (...args: Parameters<typeof client.call>) => {
+			callCount.n++;
+			const result = await originalCall(...args);
+			if (callCount.n === 1) {
+				// After first LLM call returns, abort before next turn
+				abortController.abort();
+			}
+			return result;
+		};
+
+		const tools = createDefaultRegistry();
+		const result = await runLoop(
+			client,
+			tools,
+			defaultLoopOptions(testDir, {
+				eventEmitter: emitter,
+				eventConfig,
+				abortSignal: abortController.signal,
+			}),
+		);
+
+		expect(result.exitReason).toBe("aborted");
+
+		// result event should be emitted with aborted
+		const resultEvt = events.find((e) => e.type === "result");
+		expect(resultEvt).toBeDefined();
+		expect(resultEvt?.exitReason).toBe("aborted");
+
+		// onSessionEnd should have fired
+		await new Promise<void>((resolve) => setTimeout(resolve, 200));
+		expect(await Bun.file(markerFile).exists()).toBe(true);
+	});
+
+	it("abortSignal before first turn yields zero turns", async () => {
+		const { emitter } = createCapturingEmitter();
+		const abortController = new AbortController();
+		abortController.abort(); // Already aborted
+
+		const client = createMockClient([mockTextResponse("Should not run.")]);
+		const tools = createDefaultRegistry();
+
+		const result = await runLoop(
+			client,
+			tools,
+			defaultLoopOptions(testDir, {
+				eventEmitter: emitter,
+				abortSignal: abortController.signal,
+			}),
+		);
+
+		expect(result.exitReason).toBe("aborted");
+		expect(result.totalTurns).toBe(0);
+	});
+
+	// ── 12. Full subprocess E2E (gated) ────────────────────────────────────────
 	// Spawns sapling as overstory would, with --json mode, verifies NDJSON stdout.
 
 	const SKIP_INTEG = !process.env.SAPLING_INTEGRATION_TESTS;

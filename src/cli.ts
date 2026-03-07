@@ -123,6 +123,12 @@ export async function runCommand(
 		await socketServer.start(opts.rpcSocket);
 	}
 
+	// Wire SIGTERM/SIGINT to AbortController for graceful shutdown (ov stop).
+	const abortController = new AbortController();
+	const onSignal = () => abortController.abort();
+	process.on("SIGTERM", onSignal);
+	process.on("SIGINT", onSignal);
+
 	const loopOptions: LoopOptions = {
 		task: prompt,
 		systemPrompt,
@@ -134,11 +140,14 @@ export async function runCommand(
 		rpcServer,
 		eventConfig,
 		contextWindowSize: config.contextWindow,
+		abortSignal: abortController.signal,
 	};
 
 	try {
 		return await runLoop(client, tools, loopOptions);
 	} finally {
+		process.removeListener("SIGTERM", onSignal);
+		process.removeListener("SIGINT", onSignal);
 		await socketServer?.stop();
 	}
 }

@@ -308,4 +308,84 @@ describe("guards.json end-to-end enforcement", () => {
 		expect(result.exitReason).toBe("task_complete");
 		expect(registry.calls.find((c) => c.name === "bash")).toBeUndefined();
 	});
+
+	// ── 10. fileScope blocks writes to files outside assigned scope ──────────
+	// Overstory assigns specific files to builder agents via fileScope.
+
+	it("blocks write to file outside fileScope", async () => {
+		const allowedFile = join(testDir, "src", "allowed.ts");
+		const guardsPath = await writeGuardsJson(testDir, {
+			rules: [],
+			fileScope: [allowedFile],
+		});
+
+		const guardConfig = await loadGuardConfig(guardsPath);
+		expect(guardConfig).not.toBeNull();
+		const hookManager = new HookManager(guardConfig as GuardConfig);
+
+		// LLM tries to write to a file not in the scope
+		const blockedFile = join(testDir, "src", "other.ts");
+		const client = createMockClient([
+			mockToolUseResponse("write", { file_path: blockedFile, content: "bad" }, "tc1"),
+			mockTextResponse("done"),
+		]);
+		const registry = createStubRegistry();
+
+		const result = await runLoop(client, registry, defaultLoopOptions(testDir, { hookManager }));
+
+		expect(result.exitReason).toBe("task_complete");
+		expect(registry.calls.find((c) => c.name === "write")).toBeUndefined();
+	});
+
+	// ── 11. fileScope allows writes to files in assigned scope ───────────────
+
+	it("allows write to file inside fileScope", async () => {
+		const allowedFile = join(testDir, "src", "allowed.ts");
+		const guardsPath = await writeGuardsJson(testDir, {
+			rules: [],
+			fileScope: [allowedFile],
+		});
+
+		const guardConfig = await loadGuardConfig(guardsPath);
+		expect(guardConfig).not.toBeNull();
+		const hookManager = new HookManager(guardConfig as GuardConfig);
+
+		const client = createMockClient([
+			mockToolUseResponse("write", { file_path: allowedFile, content: "ok" }, "tc1"),
+			mockTextResponse("done"),
+		]);
+		const registry = createStubRegistry();
+
+		const result = await runLoop(client, registry, defaultLoopOptions(testDir, { hookManager }));
+
+		expect(result.exitReason).toBe("task_complete");
+		expect(registry.calls.find((c) => c.name === "write")).toBeDefined();
+	});
+
+	// ── 12. fileScope allows read of any file (only blocks mutations) ────────
+
+	it("allows read of any file when fileScope is set", async () => {
+		const allowedFile = join(testDir, "src", "allowed.ts");
+		const guardsPath = await writeGuardsJson(testDir, {
+			rules: [],
+			fileScope: [allowedFile],
+		});
+
+		const guardConfig = await loadGuardConfig(guardsPath);
+		expect(guardConfig).not.toBeNull();
+		const hookManager = new HookManager(guardConfig as GuardConfig);
+
+		const otherFile = join(testDir, "src", "other.ts");
+		const client = createMockClient([
+			mockToolUseResponse("read", { file_path: otherFile }, "tc1"),
+			mockTextResponse("done"),
+		]);
+		const registry = createStubRegistry();
+
+		const result = await runLoop(client, registry, defaultLoopOptions(testDir, { hookManager }));
+
+		expect(result.exitReason).toBe("task_complete");
+		// read should NOT be blocked by fileScope (only write/edit are blocked)
+		expect(registry.calls.find((c) => c.name === "read")).toBeDefined();
+	});
 });

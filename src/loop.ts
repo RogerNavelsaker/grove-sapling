@@ -192,9 +192,11 @@ export async function runLoop(
 	});
 
 	while (totalTurns < maxTurns) {
-		// ── RPC abort check — before starting a new turn ─────────────────────
-		if (options.rpcServer?.isAbortRequested()) {
-			logger.info("Agent loop aborted by RPC request");
+		// ── Abort check — before starting a new turn ─────────────────────────
+		// Triggered by RPC abort request or external signal (SIGTERM from ov stop).
+		if (options.rpcServer?.isAbortRequested() || options.abortSignal?.aborted) {
+			const source = options.abortSignal?.aborted ? "signal" : "RPC request";
+			logger.info(`Agent loop aborted by ${source}`);
 			options.eventEmitter?.emit({
 				type: "result",
 				exitReason: "aborted",
