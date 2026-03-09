@@ -17,7 +17,14 @@ import { runLoop } from "./loop.ts";
 import { RpcServer } from "./rpc/server.ts";
 import { RpcSocketServer } from "./rpc/socket.ts";
 import { createDefaultRegistry } from "./tools/index.ts";
-import type { EventConfig, LlmClient, LoopOptions, RunOptions, SaplingConfig } from "./types.ts";
+import type {
+	EcosystemConfig,
+	EventConfig,
+	LlmClient,
+	LoopOptions,
+	RunOptions,
+	SaplingConfig,
+} from "./types.ts";
 
 // ─── Default System Prompt ────────────────────────────────────────────────────
 
@@ -129,6 +136,16 @@ export async function runCommand(
 	process.on("SIGTERM", onSignal);
 	process.on("SIGINT", onSignal);
 
+	// Ecosystem integration: load from environment variables (overstory orchestration)
+	const ecosystemConfig: EcosystemConfig | undefined =
+		process.env.OVERSTORY_AGENT_NAME && process.env.OVERSTORY_TASK_ID
+			? {
+					agentName: process.env.OVERSTORY_AGENT_NAME,
+					taskId: process.env.OVERSTORY_TASK_ID,
+					metricsPath: process.env.OVERSTORY_METRICS_PATH,
+				}
+			: undefined;
+
 	const loopOptions: LoopOptions = {
 		task: prompt,
 		systemPrompt,
@@ -141,6 +158,7 @@ export async function runCommand(
 		eventConfig,
 		contextWindowSize: config.contextWindow,
 		abortSignal: abortController.signal,
+		ecosystemConfig,
 	};
 
 	try {

@@ -102,6 +102,8 @@ export interface LoopOptions {
 	contextWindowSize?: number;
 	/** Abort signal for graceful shutdown (e.g. SIGTERM from ov stop). */
 	abortSignal?: AbortSignal;
+	/** Optional ecosystem integration config (overstory orchestration). */
+	ecosystemConfig?: EcosystemConfig;
 }
 
 export interface LoopResult {
@@ -209,6 +211,20 @@ export interface ToolRegistry {
 	get(name: string): Tool | undefined;
 	list(): Tool[];
 	toDefinitions(): ToolDefinition[];
+}
+
+// ─── Ecosystem Types ────────────────────────────────────────────────────────────
+
+/**
+ * Configuration for ecosystem integration (overstory orchestration).
+ * When present, enables between-turn mail checks,
+ * per-turn metrics writes, and task status updates on loop exit.
+ */
+export interface EcosystemConfig {
+	agentName: string;
+	taskId: string;
+	/** Path to write metrics JSON (default: .sapling/metrics.json) */
+	metricsPath?: string;
 }
 
 // ─── Guards Types ─────────────────────────────────────────────────────────────
