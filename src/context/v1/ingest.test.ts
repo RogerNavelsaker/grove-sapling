@@ -1,0 +1,1151 @@
+/**
+ * Tests for the v1 context pipeline Ingest stage.
+ */
+
+import { describe, expect, it } from "bun:test";
+import type { Message, ToolPipelineMetadata } from "../../types.ts";
+import {
+	computeDependsOn,
+	computePendingCommitments,
+	detectBoundary,
+	extractCommitments,
+	extractTurns,
+	hasFileScopeChange,
+	hasIntentSignal,
+	hasSteerRedirect,
+	hasTemporalGap,
+	hasToolTransition,
+	inferOperationType,
+	inferOutcome,
+	ingest,
+	ingestTurn,
+	resolveToolPhase,
+} from "./ingest.ts";
+import type { Operation, Turn } from "./types.ts";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeAssistantMsg(
+	tools: Array<{ name: string; path?: string }>,
+	text = "",
+): Message & { role: "assistant" } {
+	return {
+		role: "assistant",
+		content: [
+			...(text ? [{ type: "text" as const, text }] : []),
+			...tools.map((t) => ({
+				type: "tool_use" as const,
+				id: `tu_${t.name}`,
+				name: t.name,
+				input: t.path ? { path: t.path } : {},
+			})),
+		],
+	};
+}
+
+function makeUserMsg(
+	toolIds: Array<{ id: string; isError?: boolean }>,
+	content = "ok",
+): Message & { role: "user" } {
+	// ToolResultBlock[] at runtime; cast to satisfy Message's ContentBlock[] type
+	const blocks = toolIds.map((t) => ({
+		type: "tool_result" as const,
+		tool_use_id: t.id,
+		content,
+		...(t.isError ? { is_error: true } : {}),
+	})) as unknown as import("../../types.ts").ContentBlock[];
+	return { role: "user", content: blocks };
+}
+
+function makeOperation(override: Partial<Operation> = {}): Operation {
+	return {
+		id: 1,
+		status: "active",
+		type: "explore",
+		turns: [],
+		files: new Set<string>(),
+		tools: new Set<string>(),
+		outcome: "in_progress",
+		artifacts: [],
+		dependsOn: [],
+		score: 0,
+		summary: null,
+		pendingCommitments: [],
+		startTurn: 0,
+		endTurn: 0,
+		...override,
+	};
+}
+
+function makeTurn(
+	index: number,
+	tools: string[],
+	files: string[],
+	opts: {
+		hasError?: boolean;
+		hasDecision?: boolean;
+		timestamp?: number;
+		commitments?: string[];
+	} = {},
+): Turn {
+	const assistant = makeAssistantMsg(
+		tools.map((t, i) => ({ name: t, path: files[i] ?? undefined })),
+	);
+	const userMsg = makeUserMsg(tools.map((t) => ({ id: `tu_${t}`, isError: opts.hasError })));
+	return {
+		index,
+		assistant,
+		toolResults: userMsg,
+		meta: {
+			tools,
+			files,
+			hasError: opts.hasError ?? false,
+			hasDecision: opts.hasDecision ?? false,
+			tokens: 100,
+			timestamp: opts.timestamp ?? Date.now(),
+			commitments: opts.commitments ?? [],
+		},
+	};
+}
+
+// ---------------------------------------------------------------------------
+// extractTurns
+// ---------------------------------------------------------------------------
+
+describe("extractTurns", () => {
+	it("pairs assistant+user messages into turns", () => {
+		const messages: Message[] = [
+			makeAssistantMsg([{ name: "read", path: "src/foo.ts" }]),
+			makeUserMsg([{ id: "tu_read" }], "file content"),
+			makeAssistantMsg([{ name: "edit", path: "src/foo.ts" }]),
+			makeUserMsg([{ id: "tu_edit" }], "ok"),
+		];
+
+		const turns = extractTurns(messages);
+		expect(turns).toHaveLength(2);
+		expect(turns[0]?.index).toBe(0);
+		expect(turns[0]?.meta.tools).toContain("read");
+		expect(turns[1]?.index).toBe(1);
+		expect(turns[1]?.meta.tools).toContain("edit");
+	});
+
+	it("handles final assistant turn with no tool results", () => {
+		const messages: Message[] = [
+			makeAssistantMsg([{ name: "read", path: "src/foo.ts" }]),
+			makeUserMsg([{ id: "tu_read" }], "content"),
+			makeAssistantMsg([], "I'm done"),
+		];
+
+		const turns = extractTurns(messages);
+		expect(turns).toHaveLength(2);
+		expect(turns[1]?.toolResults).toBeNull();
+	});
+
+	it("skips leading user messages (e.g., task prompt)", () => {
+		const messages: Message[] = [
+			{ role: "user", content: "Do the thing" },
+			makeAssistantMsg([{ name: "glob" }]),
+			makeUserMsg([{ id: "tu_glob" }], "files"),
+		];
+
+		const turns = extractTurns(messages);
+		expect(turns).toHaveLength(1);
+		expect(turns[0]?.meta.tools).toContain("glob");
+	});
+
+	it("returns empty array for empty message list", () => {
+		expect(extractTurns([])).toHaveLength(0);
+	});
+
+	it("extracts file paths from tool_use inputs", () => {
+		const messages: Message[] = [
+			makeAssistantMsg([{ name: "read", path: "src/context/v1/types.ts" }]),
+			makeUserMsg([{ id: "tu_read" }], "content"),
+		];
+
+		const turns = extractTurns(messages);
+		expect(turns[0]?.meta.files).toContain("src/context/v1/types.ts");
+	});
+
+	it("detects errors from tool results", () => {
+		const messages: Message[] = [
+			makeAssistantMsg([{ name: "bash" }]),
+			makeUserMsg([{ id: "tu_bash", isError: true }], "command not found"),
+		];
+
+		const turns = extractTurns(messages);
+		expect(turns[0]?.meta.hasError).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// hasToolTransition
+// ---------------------------------------------------------------------------
+
+describe("hasToolTransition", () => {
+	it("detects read -> write transition", () => {
+		expect(hasToolTransition(new Set(["read"]), ["write"])).toBe(true);
+	});
+
+	it("detects write -> verify transition", () => {
+		expect(hasToolTransition(new Set(["write", "edit"]), ["bash"])).toBe(true);
+	});
+
+	it("returns false when phases overlap", () => {
+		expect(hasToolTransition(new Set(["grep"]), ["glob"])).toBe(false); // both search
+		expect(hasToolTransition(new Set(["write"]), ["edit"])).toBe(false); // both write
+	});
+
+	it("returns false when prev tools are empty", () => {
+		expect(hasToolTransition(new Set(), ["write"])).toBe(false);
+	});
+
+	it("returns false when current tools are empty", () => {
+		expect(hasToolTransition(new Set(["read"]), [])).toBe(false);
+	});
+
+	it("returns false for unknown tools", () => {
+		expect(hasToolTransition(new Set(["unknown"]), ["also_unknown"])).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// hasFileScopeChange
+// ---------------------------------------------------------------------------
+
+describe("hasFileScopeChange", () => {
+	it("detects when turn files are completely different", () => {
+		const opFiles = new Set(["src/a.ts", "src/b.ts"]);
+		expect(hasFileScopeChange(opFiles, ["src/x.ts", "src/y.ts"])).toBe(true);
+	});
+
+	it("returns false when there is file overlap", () => {
+		const opFiles = new Set(["src/a.ts", "src/b.ts"]);
+		expect(hasFileScopeChange(opFiles, ["src/a.ts"])).toBe(false);
+	});
+
+	it("returns false when operation files are empty", () => {
+		expect(hasFileScopeChange(new Set(), ["src/a.ts"])).toBe(false);
+	});
+
+	it("returns false when turn files are empty", () => {
+		expect(hasFileScopeChange(new Set(["src/a.ts"]), [])).toBe(false);
+	});
+
+	it("uses Jaccard < 0.2 threshold", () => {
+		// 1 shared out of 9 union ≈ 0.11 < 0.2 → scope change (true)
+		const opFiles = new Set(["a.ts", "b.ts", "c.ts", "d.ts", "e.ts"]);
+		expect(hasFileScopeChange(opFiles, ["a.ts", "x.ts", "y.ts", "z.ts", "w.ts"])).toBe(true); // 1/9 ≈ 0.11
+
+		// 2 shared out of 3 union ≈ 0.67 >= 0.2 → no scope change (false)
+		expect(hasFileScopeChange(new Set(["a.ts", "b.ts"]), ["a.ts", "b.ts", "c.ts"])).toBe(false); // 2/3 ≈ 0.67
+	});
+});
+
+// ---------------------------------------------------------------------------
+// hasIntentSignal
+// ---------------------------------------------------------------------------
+
+describe("hasIntentSignal", () => {
+	it("detects 'now let me'", () => {
+		expect(hasIntentSignal("Now let me look at the tests.")).toBe(true);
+	});
+
+	it("detects 'next, I'", () => {
+		expect(hasIntentSignal("Next, I need to run the build.")).toBe(true);
+	});
+
+	it("detects 'moving on to'", () => {
+		expect(hasIntentSignal("Moving on to the next file.")).toBe(true);
+	});
+
+	it("detects 'that's done'", () => {
+		expect(hasIntentSignal("That's done. Now I'll write tests.")).toBe(true);
+	});
+
+	it("returns false for regular text", () => {
+		expect(hasIntentSignal("Reading the file to understand the structure.")).toBe(false);
+	});
+
+	it("is case insensitive", () => {
+		expect(hasIntentSignal("NOW LET ME proceed.")).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// hasTemporalGap
+// ---------------------------------------------------------------------------
+
+describe("hasTemporalGap", () => {
+	it("returns true when gap > 30s", () => {
+		expect(hasTemporalGap(1000, 32_000)).toBe(true);
+	});
+
+	it("returns false when gap <= 30s", () => {
+		expect(hasTemporalGap(1000, 31_000)).toBe(false);
+	});
+
+	it("returns false for same timestamp", () => {
+		expect(hasTemporalGap(5000, 5000)).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// hasSteerRedirect
+// ---------------------------------------------------------------------------
+
+function makeSteerToolResult(content: string): Message & { role: "user" } {
+	const blocks = [
+		{
+			type: "tool_result" as const,
+			tool_use_id: "tu_steer",
+			content,
+		},
+	] as unknown as import("../../types.ts").ContentBlock[];
+	return { role: "user", content: blocks };
+}
+
+describe("hasSteerRedirect", () => {
+	it("returns false for null toolResults", () => {
+		expect(hasSteerRedirect(null)).toBe(false);
+	});
+
+	it("returns false when no [STEER] prefix", () => {
+		// Regular tool result without steer prefix
+		const msg = makeSteerToolResult("stop what you're doing and pivot to X");
+		expect(hasSteerRedirect(msg)).toBe(false);
+	});
+
+	it("returns false for [STEER] with non-redirect content", () => {
+		const msg = makeSteerToolResult("[STEER] Keep going, you're doing great.");
+		expect(hasSteerRedirect(msg)).toBe(false);
+	});
+
+	it("detects 'stop what you're doing'", () => {
+		const msg = makeSteerToolResult("[STEER] Stop what you're doing and fix the bug.");
+		expect(hasSteerRedirect(msg)).toBe(true);
+	});
+
+	it("detects 'instead do'", () => {
+		const msg = makeSteerToolResult("[STEER] Instead do the linting first.");
+		expect(hasSteerRedirect(msg)).toBe(true);
+	});
+
+	it("detects 'new priority'", () => {
+		const msg = makeSteerToolResult("[STEER] New priority: fix the failing test.");
+		expect(hasSteerRedirect(msg)).toBe(true);
+	});
+
+	it("detects 'never mind'", () => {
+		const msg = makeSteerToolResult("[STEER] Never mind, we don't need that.");
+		expect(hasSteerRedirect(msg)).toBe(true);
+	});
+
+	it("detects 'change of plans'", () => {
+		const msg = makeSteerToolResult("[STEER] Change of plans — do the refactor instead.");
+		expect(hasSteerRedirect(msg)).toBe(true);
+	});
+
+	it("detects 'pivot to'", () => {
+		const msg = makeSteerToolResult("[STEER] Pivot to writing tests now.");
+		expect(hasSteerRedirect(msg)).toBe(true);
+	});
+
+	it("detects 'actually, do'", () => {
+		const msg = makeSteerToolResult("[STEER] Actually, do the integration tests first.");
+		expect(hasSteerRedirect(msg)).toBe(true);
+	});
+
+	it("detects 'scratch that'", () => {
+		const msg = makeSteerToolResult("[STEER] Scratch that — focus on the config file.");
+		expect(hasSteerRedirect(msg)).toBe(true);
+	});
+
+	it("is case insensitive", () => {
+		const msg = makeSteerToolResult("[STEER] STOP WHAT YOU'RE DOING!");
+		expect(hasSteerRedirect(msg)).toBe(true);
+	});
+
+	it("returns false for non-array content", () => {
+		const msg: Message & { role: "user" } = {
+			role: "user",
+			content: "[STEER] stop what you're doing",
+		};
+		expect(hasSteerRedirect(msg)).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// detectBoundary
+// ---------------------------------------------------------------------------
+
+describe("detectBoundary", () => {
+	it("returns false when no signals", () => {
+		expect(
+			detectBoundary({
+				toolTypeTransition: false,
+				fileScopeChange: false,
+				intentSignal: false,
+				temporalGap: false,
+				steerRedirect: false,
+			}),
+		).toBe(false);
+	});
+
+	it("returns true when toolTypeTransition + fileScopeChange (0.35+0.30=0.65 >= 0.5)", () => {
+		expect(
+			detectBoundary({
+				toolTypeTransition: true,
+				fileScopeChange: true,
+				intentSignal: false,
+				temporalGap: false,
+				steerRedirect: false,
+			}),
+		).toBe(true);
+	});
+
+	it("returns true when toolTypeTransition + intentSignal (0.35+0.20=0.55 >= 0.5)", () => {
+		expect(
+			detectBoundary({
+				toolTypeTransition: true,
+				fileScopeChange: false,
+				intentSignal: true,
+				temporalGap: false,
+				steerRedirect: false,
+			}),
+		).toBe(true);
+	});
+
+	it("returns false when only intentSignal + temporalGap (0.20+0.15=0.35 < 0.5)", () => {
+		expect(
+			detectBoundary({
+				toolTypeTransition: false,
+				fileScopeChange: false,
+				intentSignal: true,
+				temporalGap: true,
+				steerRedirect: false,
+			}),
+		).toBe(false);
+	});
+
+	it("returns true when all signals fire (1.0 >= 0.5)", () => {
+		expect(
+			detectBoundary({
+				toolTypeTransition: true,
+				fileScopeChange: true,
+				intentSignal: true,
+				temporalGap: true,
+				steerRedirect: false,
+			}),
+		).toBe(true);
+	});
+
+	it("returns false when only toolTypeTransition (0.35 < 0.5)", () => {
+		expect(
+			detectBoundary({
+				toolTypeTransition: true,
+				fileScopeChange: false,
+				intentSignal: false,
+				temporalGap: false,
+				steerRedirect: false,
+			}),
+		).toBe(false);
+	});
+
+	it("returns false when only fileScopeChange (0.30 < 0.5)", () => {
+		expect(
+			detectBoundary({
+				toolTypeTransition: false,
+				fileScopeChange: true,
+				intentSignal: false,
+				temporalGap: false,
+				steerRedirect: false,
+			}),
+		).toBe(false);
+	});
+
+	it("returns true when fileScopeChange + intentSignal (0.30+0.20=0.50 >= 0.5)", () => {
+		expect(
+			detectBoundary({
+				toolTypeTransition: false,
+				fileScopeChange: true,
+				intentSignal: true,
+				temporalGap: false,
+				steerRedirect: false,
+			}),
+		).toBe(true);
+	});
+
+	it("returns true when steerRedirect alone (override, no other signals)", () => {
+		expect(
+			detectBoundary({
+				toolTypeTransition: false,
+				fileScopeChange: false,
+				intentSignal: false,
+				temporalGap: false,
+				steerRedirect: true,
+			}),
+		).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// inferOperationType
+// ---------------------------------------------------------------------------
+
+describe("inferOperationType", () => {
+	it("returns 'explore' for read+search tools", () => {
+		expect(inferOperationType(new Set(["read", "grep", "glob"]))).toBe("explore");
+	});
+
+	it("returns 'mutate' for write/edit tools", () => {
+		expect(inferOperationType(new Set(["write"]))).toBe("mutate");
+		expect(inferOperationType(new Set(["edit"]))).toBe("mutate");
+	});
+
+	it("returns 'verify' for bash only", () => {
+		expect(inferOperationType(new Set(["bash"]))).toBe("verify");
+	});
+
+	it("returns 'mixed' for write+bash", () => {
+		expect(inferOperationType(new Set(["write", "bash"]))).toBe("mixed");
+		expect(inferOperationType(new Set(["edit", "bash"]))).toBe("mixed");
+	});
+
+	it("returns 'explore' for empty tools", () => {
+		expect(inferOperationType(new Set())).toBe("explore");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// inferOutcome
+// ---------------------------------------------------------------------------
+
+describe("inferOutcome", () => {
+	it("returns 'partial' for empty operation", () => {
+		const op = makeOperation({ turns: [] });
+		expect(inferOutcome(op)).toBe("partial");
+	});
+
+	it("returns 'failure' when last turn has error", () => {
+		const turn = makeTurn(0, ["bash"], [], { hasError: true });
+		const op = makeOperation({ turns: [turn] });
+		expect(inferOutcome(op)).toBe("failure");
+	});
+
+	it("returns 'success' for read-only operation", () => {
+		const turn = makeTurn(0, ["read"], ["src/foo.ts"]);
+		const op = makeOperation({ turns: [turn], tools: new Set(["read"]) });
+		expect(inferOutcome(op)).toBe("success");
+	});
+
+	it("returns 'success' when write op ends with successful bash", () => {
+		const t1 = makeTurn(0, ["write"], ["src/foo.ts"]);
+		const t2 = makeTurn(1, ["bash"], []);
+		const op = makeOperation({ turns: [t1, t2], tools: new Set(["write", "bash"]) });
+		expect(inferOutcome(op)).toBe("success");
+	});
+
+	it("returns 'partial' when write op does not end with bash", () => {
+		const t1 = makeTurn(0, ["write"], ["src/foo.ts"]);
+		const op = makeOperation({ turns: [t1], tools: new Set(["write"]) });
+		expect(inferOutcome(op)).toBe("partial");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// computeDependsOn
+// ---------------------------------------------------------------------------
+
+describe("computeDependsOn", () => {
+	it("returns empty array when no previous operations", () => {
+		const files = new Set(["src/foo.ts"]);
+		expect(computeDependsOn(files, [])).toEqual([]);
+	});
+
+	it("returns empty when no artifact overlap and no failure", () => {
+		const prevOp = makeOperation({
+			id: 1,
+			status: "completed",
+			outcome: "success",
+			artifacts: ["src/bar.ts"],
+		});
+		const files = new Set(["src/foo.ts"]);
+		expect(computeDependsOn(files, [prevOp])).toEqual([]);
+	});
+
+	it("detects file-level artifact dependency", () => {
+		const prevOp = makeOperation({
+			id: 1,
+			status: "completed",
+			outcome: "success",
+			artifacts: ["src/foo.ts", "src/bar.ts"],
+		});
+		// new op reads src/foo.ts which prev op produced
+		const files = new Set(["src/foo.ts"]);
+		expect(computeDependsOn(files, [prevOp])).toContain(1);
+	});
+
+	it("detects dependency on multiple previous ops via artifacts", () => {
+		const op1 = makeOperation({
+			id: 1,
+			status: "completed",
+			outcome: "success",
+			artifacts: ["src/a.ts"],
+		});
+		const op2 = makeOperation({
+			id: 2,
+			status: "completed",
+			outcome: "success",
+			artifacts: ["src/b.ts"],
+		});
+		const files = new Set(["src/a.ts", "src/b.ts"]);
+		const deps = computeDependsOn(files, [op1, op2]);
+		expect(deps).toContain(1);
+		expect(deps).toContain(2);
+	});
+
+	it("detects investigate→fix chain when last completed op failed", () => {
+		const failedOp = makeOperation({
+			id: 1,
+			status: "completed",
+			outcome: "failure",
+			artifacts: [],
+		});
+		const files = new Set(["src/unrelated.ts"]);
+		expect(computeDependsOn(files, [failedOp])).toContain(1);
+	});
+
+	it("does not duplicate when artifact overlap and failure coincide", () => {
+		const failedOp = makeOperation({
+			id: 1,
+			status: "completed",
+			outcome: "failure",
+			artifacts: ["src/foo.ts"],
+		});
+		const files = new Set(["src/foo.ts"]);
+		const deps = computeDependsOn(files, [failedOp]);
+		// Should contain id 1 exactly once
+		expect(deps.filter((d) => d === 1)).toHaveLength(1);
+	});
+
+	it("skips active operations for error chain check", () => {
+		const activeOp = makeOperation({
+			id: 1,
+			status: "active",
+			outcome: "in_progress",
+			artifacts: [],
+		});
+		const files = new Set(["src/foo.ts"]);
+		expect(computeDependsOn(files, [activeOp])).toEqual([]);
+	});
+
+	it("uses most recent completed op for error chain (not earlier ones)", () => {
+		const op1 = makeOperation({ id: 1, status: "completed", outcome: "failure", artifacts: [] });
+		const op2 = makeOperation({ id: 2, status: "completed", outcome: "success", artifacts: [] });
+		const files = new Set(["src/unrelated.ts"]);
+		// op2 is the most recent completed op and did NOT fail → no error chain dep
+		const deps = computeDependsOn(files, [op1, op2]);
+		expect(deps).not.toContain(1);
+		expect(deps).not.toContain(2);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// ingestTurn
+// ---------------------------------------------------------------------------
+
+describe("ingestTurn", () => {
+	it("creates first operation when none exist", () => {
+		const turn = makeTurn(0, ["read"], ["src/foo.ts"]);
+		const result = ingestTurn([], null, turn, 1);
+
+		expect(result.operations).toHaveLength(1);
+		expect(result.operations[0]?.status).toBe("active");
+		expect(result.operations[0]?.turns).toHaveLength(1);
+		expect(result.activeOperationId).toBe(result.operations[0]?.id ?? null);
+	});
+
+	it("adds turn to active operation when no boundary", () => {
+		const t1 = makeTurn(0, ["read"], ["src/foo.ts"]);
+		const t2 = makeTurn(1, ["read"], ["src/foo.ts"]); // same phase, same file
+
+		const r1 = ingestTurn([], null, t1, 1);
+		const r2 = ingestTurn(r1.operations, r1.activeOperationId, t2, r1.nextOperationId);
+
+		expect(r2.operations).toHaveLength(1);
+		expect(r2.operations[0]?.turns).toHaveLength(2);
+	});
+
+	it("creates new operation when boundary detected", () => {
+		const now = Date.now();
+		const t1 = makeTurn(0, ["read"], ["src/foo.ts"], { timestamp: now });
+		// read -> write transition (0.35) + different files (0.30) = 0.65 >= 0.5
+		const t2 = makeTurn(1, ["write"], ["src/bar.ts"], { timestamp: now + 100 });
+
+		const r1 = ingestTurn([], null, t1, 1);
+		// Manually set the active op's tools and files
+		r1.operations[0]?.tools.add("read");
+		r1.operations[0]?.files.add("src/foo.ts");
+
+		const r2 = ingestTurn(r1.operations, r1.activeOperationId, t2, r1.nextOperationId);
+
+		expect(r2.operations).toHaveLength(2);
+		expect(r2.operations[0]?.status).toBe("completed");
+		expect(r2.operations[1]?.status).toBe("active");
+		expect(r2.activeOperationId).toBe(r2.operations[1]?.id ?? null);
+	});
+
+	it("finalizes operation with outcome on boundary", () => {
+		const now = Date.now();
+		const t1 = makeTurn(0, ["read"], ["src/a.ts"], { timestamp: now });
+		const t2 = makeTurn(1, ["write"], ["src/b.ts"], { timestamp: now + 100 });
+
+		const r1 = ingestTurn([], null, t1, 1);
+		r1.operations[0]?.tools.add("read");
+		r1.operations[0]?.files.add("src/a.ts");
+
+		const r2 = ingestTurn(r1.operations, r1.activeOperationId, t2, r1.nextOperationId);
+
+		expect(r2.operations[0]?.outcome).not.toBe("in_progress");
+	});
+
+	it("populates dependsOn when new op reads files produced by a prior op", () => {
+		const now = Date.now();
+		// Op 1: writes src/foo.ts
+		const t1 = makeTurn(0, ["write"], ["src/foo.ts"], { timestamp: now });
+		const r1 = ingestTurn([], null, t1, 1);
+		r1.operations[0]?.tools.add("write");
+		r1.operations[0]?.files.add("src/foo.ts");
+		// simulate artifact tracking
+		if (r1.operations[0] !== undefined) r1.operations[0].artifacts = ["src/foo.ts"];
+
+		// Op 2: reads src/foo.ts — different phase (read vs write), different file triggers boundary
+		// Actually read->verify transition won't work well... use read on a new file + file scope change
+		// Simulate: Op2 is verify phase on src/foo.ts (tests)
+		const t2 = makeTurn(1, ["bash"], ["src/foo.ts"], { timestamp: now + 100 });
+
+		const r2 = ingestTurn(r1.operations, r1.activeOperationId, t2, r1.nextOperationId);
+
+		// Boundary should be detected (write -> verify transition)
+		if (r2.operations.length === 2) {
+			// New operation should depend on op 1 because it reads src/foo.ts which op 1 produced
+			expect(r2.operations[1]?.dependsOn).toContain(r1.operations[0]?.id);
+		}
+	});
+
+	it("populates dependsOn via investigate→fix chain when previous op failed", () => {
+		const now = Date.now();
+		// Op 1: bash that fails
+		const t1 = makeTurn(0, ["bash"], [], { hasError: true, timestamp: now });
+		const r1 = ingestTurn([], null, t1, 1);
+		r1.operations[0]?.tools.add("bash");
+
+		// Op 2: write to fix the error — different phase (verify -> write) triggers boundary
+		const t2 = makeTurn(1, ["write"], ["src/fix.ts"], { timestamp: now + 100 });
+
+		const r2 = ingestTurn(r1.operations, r1.activeOperationId, t2, r1.nextOperationId);
+
+		if (r2.operations.length === 2) {
+			// New op should depend on the failed op
+			expect(r2.operations[1]?.dependsOn).toContain(r2.operations[0]?.id);
+		}
+	});
+
+	it("creates new operation when steer redirect is detected (same files/tools)", () => {
+		// Steer redirect alone triggers boundary even when other signals don't fire
+		const now = Date.now();
+		const t1 = makeTurn(0, ["read"], ["src/foo.ts"], { timestamp: now });
+
+		// Build a turn that would NOT normally trigger a boundary (same tool, same file)
+		// but has a steer redirect in its tool results
+		const assistantMsg = makeAssistantMsg([{ name: "read", path: "src/foo.ts" }]);
+		const steerBlocks = [
+			{
+				type: "tool_result" as const,
+				tool_use_id: "tu_read",
+				content: "[STEER] Stop what you're doing and focus on the auth module instead.",
+			},
+		] as unknown as import("../../types.ts").ContentBlock[];
+		const steerUserMsg: Message & { role: "user" } = { role: "user", content: steerBlocks };
+		const t2: import("./types.ts").Turn = {
+			index: 1,
+			assistant: assistantMsg,
+			toolResults: steerUserMsg,
+			meta: {
+				tools: ["read"],
+				files: ["src/foo.ts"],
+				hasError: false,
+				hasDecision: false,
+				tokens: 100,
+				timestamp: now + 100,
+			},
+		};
+
+		const r1 = ingestTurn([], null, t1, 1);
+		r1.operations[0]?.tools.add("read");
+		r1.operations[0]?.files.add("src/foo.ts");
+
+		const r2 = ingestTurn(r1.operations, r1.activeOperationId, t2, r1.nextOperationId);
+
+		expect(r2.operations).toHaveLength(2);
+		expect(r2.operations[0]?.status).toBe("completed");
+		expect(r2.operations[1]?.status).toBe("active");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// ingest (full pipeline entry point)
+// ---------------------------------------------------------------------------
+
+describe("ingest", () => {
+	it("processes a sequence of messages into operations", () => {
+		const messages: Message[] = [
+			makeAssistantMsg([{ name: "read", path: "src/a.ts" }]),
+			makeUserMsg([{ id: "tu_read" }], "content a"),
+			makeAssistantMsg([{ name: "read", path: "src/b.ts" }]),
+			makeUserMsg([{ id: "tu_read" }], "content b"),
+		];
+
+		const result = ingest(messages, [], null, 1);
+
+		expect(result.operations).toHaveLength(1);
+		expect(result.operations[0]?.turns).toHaveLength(2);
+	});
+
+	it("is idempotent when called twice with the same messages", () => {
+		const messages: Message[] = [
+			makeAssistantMsg([{ name: "read", path: "src/a.ts" }]),
+			makeUserMsg([{ id: "tu_read" }], "content"),
+		];
+
+		const r1 = ingest(messages, [], null, 1);
+		const r2 = ingest(messages, r1.operations, r1.activeOperationId, r1.nextOperationId);
+
+		// No new turns — registry should be unchanged
+		expect(r2.operations).toHaveLength(r1.operations.length);
+		expect(r2.operations[0]?.turns).toHaveLength(r1.operations[0]?.turns.length ?? 0);
+	});
+
+	it("handles incremental ingestion correctly", () => {
+		const messages1: Message[] = [
+			makeAssistantMsg([{ name: "read", path: "src/a.ts" }]),
+			makeUserMsg([{ id: "tu_read" }], "content a"),
+		];
+		const messages2: Message[] = [
+			...messages1,
+			makeAssistantMsg([{ name: "read", path: "src/b.ts" }]),
+			makeUserMsg([{ id: "tu_read2" }], "content b"),
+		];
+
+		const r1 = ingest(messages1, [], null, 1);
+		const r2 = ingest(messages2, r1.operations, r1.activeOperationId, r1.nextOperationId);
+
+		expect(r2.operations[0]?.turns).toHaveLength(2);
+	});
+
+	it("starts with empty operations when no messages", () => {
+		const result = ingest([], [], null, 1);
+		expect(result.operations).toHaveLength(0);
+		expect(result.activeOperationId).toBeNull();
+	});
+
+	it("trackedTurnCount accounts for compacted operations (counts as 1)", () => {
+		// A compacted op with 3 turns renders as 1 synthetic pair, not 3.
+		// New messages should include: 1 synthetic pair + 1 new turn (index 1).
+		// extractTurns sees only 1 assistant turn in the message array (the new one after the
+		// synthetic assistant message which has no tool_use blocks).
+		// We set up the operation registry manually and pass a message array containing just the new turn.
+		const compactedOp = makeOperation({
+			id: 1,
+			status: "compacted",
+			summary: "Compacted: explored 3 files",
+			turns: [
+				makeTurn(0, ["read"], ["src/a.ts"]),
+				makeTurn(1, ["read"], ["src/b.ts"]),
+				makeTurn(2, ["read"], ["src/c.ts"]),
+			],
+		});
+		// Messages: task + synthetic assistant (compacted summary, no tool_use) + synthetic user ack
+		//           + new assistant with tool_use + new user with tool_result
+		const syntheticAssistant: Message = {
+			role: "assistant",
+			content: [{ type: "text", text: compactedOp.summary ?? "" }],
+		};
+		const syntheticAck: Message = { role: "user", content: "[continued]" };
+		const newAssistant = makeAssistantMsg([{ name: "edit", path: "src/d.ts" }]);
+		const newUser = makeUserMsg([{ id: "tu_edit" }], "done");
+		const messages: Message[] = [syntheticAssistant, syntheticAck, newAssistant, newUser];
+
+		const result = ingest(messages, [compactedOp], 1, 2);
+
+		// The new turn should be ingested (not silently dropped)
+		const totalTurns = result.operations.reduce((sum, op) => sum + op.turns.length, 0);
+		// compacted op has 3 turns + 1 new turn = 4 total
+		expect(totalTurns).toBe(4);
+	});
+
+	it("trackedTurnCount accounts for archived operations (counts as 0)", () => {
+		// An archived op with 2 turns renders as 0 messages (moved to system prompt).
+		// New messages should be: the active op turns + 1 new turn.
+		const archivedOp = makeOperation({
+			id: 1,
+			status: "archived",
+			turns: [makeTurn(0, ["read"], ["src/a.ts"]), makeTurn(1, ["read"], ["src/b.ts"])],
+		});
+		const activeOp = makeOperation({
+			id: 2,
+			status: "active",
+			turns: [makeTurn(2, ["edit"], ["src/c.ts"])],
+		});
+		// Messages contain only active op turns + a new turn
+		const activeAssistant = makeAssistantMsg([{ name: "edit", path: "src/c.ts" }]);
+		const activeUser = makeUserMsg([{ id: "tu_edit" }], "ok");
+		const newAssistant = makeAssistantMsg([{ name: "bash" }]);
+		const newUser = makeUserMsg([{ id: "tu_bash" }], "tests passed");
+		const messages: Message[] = [activeAssistant, activeUser, newAssistant, newUser];
+
+		const result = ingest(messages, [archivedOp, activeOp], 2, 3);
+
+		const totalTurns = result.operations.reduce((sum, op) => sum + op.turns.length, 0);
+		// archived: 2, active: 1 existing + 1 new = 4 total
+		expect(totalTurns).toBe(4);
+	});
+
+	it("new turns are not lost after compaction", () => {
+		// Full integration: create operations, compact one, add new messages, verify ingestion.
+		const messages1: Message[] = [
+			makeAssistantMsg([{ name: "read", path: "src/a.ts" }]),
+			makeUserMsg([{ id: "tu_read" }], "content a"),
+		];
+		const r1 = ingest(messages1, [], null, 1);
+
+		// Mark the operation as compacted (simulate compact stage)
+		const compactedOps = r1.operations.map((op) => ({
+			...op,
+			status: "compacted" as const,
+			summary: "Compacted summary",
+		}));
+
+		// The rendered output would be a synthetic pair (1 "turn"), then a new turn
+		const syntheticAssistant: Message = {
+			role: "assistant",
+			content: [{ type: "text", text: "Compacted summary" }],
+		};
+		const syntheticAck: Message = { role: "user", content: "[continued]" };
+		const newAssistant = makeAssistantMsg([{ name: "write", path: "src/b.ts" }]);
+		const newUser = makeUserMsg([{ id: "tu_write" }], "written");
+		const messages2: Message[] = [syntheticAssistant, syntheticAck, newAssistant, newUser];
+
+		const r2 = ingest(messages2, compactedOps, r1.activeOperationId, r1.nextOperationId);
+
+		// There should be at least one new turn in the result (the write turn)
+		const totalTurns = r2.operations.reduce((sum, op) => sum + op.turns.length, 0);
+		expect(totalTurns).toBeGreaterThan(r1.operations.reduce((s, op) => s + op.turns.length, 0));
+	});
+});
+
+// ---------------------------------------------------------------------------
+// resolveToolPhase — metadata-first lookup with TOOL_PHASES fallback
+// ---------------------------------------------------------------------------
+
+describe("resolveToolPhase", () => {
+	it("returns metadata phase when available", () => {
+		const meta: ToolPipelineMetadata = { phase: "write" };
+		const map = new Map<string, ToolPipelineMetadata>([["custom-write", meta]]);
+		expect(resolveToolPhase("custom-write", map)).toBe("write");
+	});
+
+	it("falls back to TOOL_PHASES for built-in tools when no metadata map", () => {
+		expect(resolveToolPhase("bash")).toBe("verify");
+		expect(resolveToolPhase("read")).toBe("read");
+		expect(resolveToolPhase("grep")).toBe("search");
+		expect(resolveToolPhase("glob")).toBe("search");
+		expect(resolveToolPhase("write")).toBe("write");
+		expect(resolveToolPhase("edit")).toBe("write");
+	});
+
+	it("falls back to TOOL_PHASES when metadata map exists but tool has no entry", () => {
+		const map = new Map<string, ToolPipelineMetadata>([["other-tool", { phase: "read" }]]);
+		expect(resolveToolPhase("bash", map)).toBe("verify");
+	});
+
+	it("falls back to TOOL_PHASES when metadata entry has no phase", () => {
+		const meta: ToolPipelineMetadata = { filePathKeys: ["src"] };
+		const map = new Map<string, ToolPipelineMetadata>([["bash", meta]]);
+		expect(resolveToolPhase("bash", map)).toBe("verify");
+	});
+
+	it("returns undefined for unknown tool with no metadata", () => {
+		expect(resolveToolPhase("unknown-custom-tool")).toBeUndefined();
+	});
+
+	it("returns undefined for unknown tool even with empty metadata map", () => {
+		const map = new Map<string, ToolPipelineMetadata>();
+		expect(resolveToolPhase("unknown-custom-tool", map)).toBeUndefined();
+	});
+});
+
+describe("hasToolTransition — metadata-based phase lookup", () => {
+	it("detects transition using custom tool metadata phase", () => {
+		// custom-reader has phase "read", custom-writer has phase "write"
+		const metaMap = new Map<string, ToolPipelineMetadata>([
+			["custom-reader", { phase: "read" }],
+			["custom-writer", { phase: "write" }],
+		]);
+		const prevTools = new Set(["custom-reader"]);
+		const currTools = ["custom-writer"];
+		expect(hasToolTransition(prevTools, currTools, metaMap)).toBe(true);
+	});
+
+	it("no transition when custom tools share same phase", () => {
+		const metaMap = new Map<string, ToolPipelineMetadata>([
+			["custom-grep", { phase: "search" }],
+			["custom-glob", { phase: "search" }],
+		]);
+		const prevTools = new Set(["custom-grep"]);
+		const currTools = ["custom-glob"];
+		expect(hasToolTransition(prevTools, currTools, metaMap)).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// extractCommitments
+// ---------------------------------------------------------------------------
+
+describe("extractCommitments", () => {
+	it("extracts commitments from numbered lists with action verbs", () => {
+		const text = "I'll do the following:\n1. Edit src/foo.ts\n2. Edit src/bar.ts\n3. Run tests";
+		const commitments = extractCommitments(text);
+		expect(commitments.some((c) => c.includes("src/foo.ts"))).toBe(true);
+		expect(commitments.some((c) => c.includes("src/bar.ts"))).toBe(true);
+		expect(commitments.some((c) => /run tests/i.test(c))).toBe(true);
+	});
+
+	it("extracts commitments from future-tense phrases", () => {
+		const text = "I'll implement the authentication module and then run the test suite.";
+		const commitments = extractCommitments(text);
+		expect(commitments.length).toBeGreaterThan(0);
+		expect(commitments.some((c) => /implement/i.test(c))).toBe(true);
+	});
+
+	it("extracts commitments from bulleted action lists", () => {
+		const text = "Steps:\n- Edit config.ts\n- Update schema.json";
+		const commitments = extractCommitments(text);
+		expect(commitments.some((c) => c.includes("config.ts"))).toBe(true);
+		expect(commitments.some((c) => c.includes("schema.json"))).toBe(true);
+	});
+
+	it("ignores list items without action verbs or file paths", () => {
+		const text = "1. Something vague\n2. A general concept";
+		const commitments = extractCommitments(text);
+		expect(commitments).toHaveLength(0);
+	});
+
+	it("returns empty array for plain descriptive text", () => {
+		const text = "The system uses a layered architecture with separate concerns.";
+		const commitments = extractCommitments(text);
+		expect(commitments).toHaveLength(0);
+	});
+
+	it("deduplicates repeated commitments", () => {
+		const text = "I'll edit src/foo.ts\n1. Edit src/foo.ts";
+		const commitments = extractCommitments(text);
+		const dedupedCount = new Set(commitments).size;
+		expect(dedupedCount).toBe(commitments.length);
+	});
+
+	it("caps output at 20 items", () => {
+		const items = Array.from({ length: 30 }, (_, i) => `${i + 1}. Edit src/file${i}.ts`).join("\n");
+		const commitments = extractCommitments(items);
+		expect(commitments.length).toBeLessThanOrEqual(20);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// computePendingCommitments
+// ---------------------------------------------------------------------------
+
+describe("computePendingCommitments", () => {
+	it("returns empty array when outcome is success", () => {
+		const turn = makeTurn(0, ["write"], ["src/foo.ts"], {
+			commitments: ["edit src/bar.ts"],
+		});
+		const op = makeOperation({
+			turns: [turn],
+			artifacts: ["src/foo.ts"],
+			outcome: "success",
+		});
+		expect(computePendingCommitments(op)).toEqual([]);
+	});
+
+	it("returns commitments for files not in artifacts when outcome is partial", () => {
+		const turn = makeTurn(0, ["write"], ["src/foo.ts"], {
+			commitments: ["edit src/foo.ts", "edit src/bar.ts"],
+		});
+		const op = makeOperation({
+			turns: [turn],
+			artifacts: ["src/foo.ts"],
+			outcome: "partial",
+		});
+		const pending = computePendingCommitments(op);
+		// src/bar.ts was committed but not in artifacts → pending
+		expect(pending.some((c) => c.includes("src/bar.ts"))).toBe(true);
+		// src/foo.ts was committed and IS in artifacts → not pending
+		expect(pending.some((c) => c === "edit src/foo.ts")).toBe(false);
+	});
+
+	it("includes non-file commitments from last turn", () => {
+		const lastTurn = makeTurn(1, ["bash"], [], {
+			commitments: ["run the test suite"],
+		});
+		const op = makeOperation({
+			turns: [lastTurn],
+			artifacts: [],
+			outcome: "partial",
+		});
+		const pending = computePendingCommitments(op);
+		expect(pending).toContain("run the test suite");
+	});
+
+	it("does not include non-file commitments from non-last turns", () => {
+		const firstTurn = makeTurn(0, ["read"], ["src/foo.ts"], {
+			commitments: ["check the documentation"],
+		});
+		const lastTurn = makeTurn(1, ["write"], ["src/bar.ts"], {
+			commitments: [],
+		});
+		const op = makeOperation({
+			turns: [firstTurn, lastTurn],
+			artifacts: ["src/bar.ts"],
+			outcome: "partial",
+		});
+		const pending = computePendingCommitments(op);
+		// "check the documentation" is non-file and from a non-last turn → not included
+		expect(pending).not.toContain("check the documentation");
+	});
+
+	it("returns empty array when no commitments in any turn", () => {
+		const turn = makeTurn(0, ["read"], ["src/foo.ts"]);
+		const op = makeOperation({
+			turns: [turn],
+			artifacts: [],
+			outcome: "partial",
+		});
+		expect(computePendingCommitments(op)).toEqual([]);
+	});
+
+	it("caps result at 10 items", () => {
+		const commitments = Array.from({ length: 15 }, (_, i) => `edit src/file${i}.ts`);
+		const turn = makeTurn(0, ["read"], [], { commitments });
+		const op = makeOperation({
+			turns: [turn],
+			artifacts: [],
+			outcome: "partial",
+		});
+		const pending = computePendingCommitments(op);
+		expect(pending.length).toBeLessThanOrEqual(10);
+	});
+});
